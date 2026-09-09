@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>수도권 아파트 3D 조망 뷰어</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <!-- vworld 웹GL 3D지도 API. document.write로 내부 의존 스크립트(Cesium 등)를 불러오기 때문에
+       반드시 이렇게 파싱 시점에 직접 박아둔 <script> 태그로 넣어야 한다.
+       (JS로 동적 주입하면 document.write가 막혀서 vw 객체가 만들어지지 않는다.)
+       apiKey/domain을 바꾸려면 여기 URL을 직접 수정하세요. -->
+  <script src="https://map.vworld.kr/js/webglMapInit.js.do?version=2.0&apiKey=639AD4BC-A578-4234-92BB-BA8A02E9936D&domain=localhost"></script>
+</head>
+<body>
+  <div id="vmap"></div>
+
+  <div id="sidebar" class="panel">
+    <h1>3D 지도 및 경관 검색</h1>
+    <form id="search-form" class="search-form">
+      <input id="search-input" type="text" placeholder="아파트 단지명 또는 동(행정구역) 입력" autocomplete="off" />
+      <button type="submit" class="action-btn">검색</button>
+    </form>
+  </div>
+
+  <div id="orbit-panel">
+    <div class="dpad">
+      <button id="dpad-up" class="dpad-btn dpad-up" type="button" aria-label="위로 기울이기"><span class="arrow"></span></button>
+      <button id="dpad-down" class="dpad-btn dpad-down" type="button" aria-label="아래로 기울이기"><span class="arrow"></span></button>
+      <button id="dpad-left" class="dpad-btn dpad-left" type="button" aria-label="왼쪽으로 회전"><span class="arrow"></span></button>
+      <button id="dpad-right" class="dpad-btn dpad-right" type="button" aria-label="오른쪽으로 회전"><span class="arrow"></span></button>
+      <div class="dpad-center"></div>
+    </div>
+  </div>
+
+  <div id="info-card" class="panel">
+    <div id="info-details">
+      <div class="row" id="info-floor"></div>
+      <div class="row" id="info-elev"></div>
+    </div>
+    <div class="actions">
+      <button id="btn-view" class="action-btn">이 지점에서 조망보기</button>
+      <button id="btn-back" class="action-btn secondary" style="display:none">전체보기로 돌아가기</button>
+      <button id="btn-close-info" class="action-btn secondary">닫기</button>
+    </div>
+  </div>
+
+  <div id="status-toast" class="panel"></div>
+
+  <!-- 순서 중요: config -> terrain -> vworldBootstrap -> buildingPicker -> viewpoint -> orbitControl -> search -> main -->
+  <script src="js/config.js"></script>
+  <script src="js/terrain.js"></script>
+  <script src="js/vworldBootstrap.js"></script>
+  <script src="js/buildingPicker.js"></script>
+  <script src="js/viewpoint.js"></script>
+  <script src="js/orbitControl.js"></script>
+  <script src="js/search.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
