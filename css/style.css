@@ -113,11 +113,24 @@ button.action-btn:hover {
   filter: brightness(1.1);
 }
 
+/* vworld 자체 줌 버튼(+/홈/-)을 없애고 그 자리를 방향 패드로 대체한다. */
+#naviZoomPannel {
+  display: none !important;
+}
+
 #orbit-panel {
   position: absolute;
   z-index: 10;
-  top: 16px;
-  left: 288px; /* 사이드바(left 16px + width 260px) 바로 오른쪽. 드래그로 옮기면 여기 값은 인라인 스타일로 덮어써진다 */
+  /* 없앤 #naviZoomPannel과 정확히 같은 박스(top:155px, right:30px, 126x126)를 그대로 써서,
+     그 위 나침반(#naviRotate: 역시 right:30px, 126x126)과 가로 중심이 자동으로 맞는다.
+     드래그로 옮기면 여기 값은 인라인 스타일로 덮어써진다 */
+  top: 155px;
+  right: 30px;
+  width: 126px;
+  height: 126px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .dpad {
