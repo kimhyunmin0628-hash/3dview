@@ -22,6 +22,13 @@ function enableBuildingViewPicker(viewer, map, onPicked) {
     const heightAboveGround = Math.max(0, geo.height - groundHeight);
     const estimatedFloor = Math.max(1, Math.round(heightAboveGround / FLOOR_HEIGHT_M) + 1);
 
+    // 벽면이 바라보는 바깥쪽 방향은 "클릭 지점 -> 클릭 당시 카메라 위치" 방위각으로 근사한다.
+    // Cesium은 카메라를 향한(보이는) 면만 pick하므로 카메라는 항상 그 벽의 바깥쪽에 있다.
+    // 단지 전체의 대표 좌표(anchor) 하나로 방향을 근사하던 예전 방식은, 같은 단지 안에서도
+    // 동마다 실제로 바라보는 방향이 제각각이라 엉뚱한(건물 반대편) 방향이 나올 수 있었다.
+    const cameraGeo = cartesianToGeodetic(viewer, viewer.camera.position);
+    const viewBearingDeg = bearingDegrees(geo.lon, geo.lat, cameraGeo.lon, cameraGeo.lat);
+
     onPicked({
       lon: geo.lon,
       lat: geo.lat,
@@ -30,6 +37,7 @@ function enableBuildingViewPicker(viewer, map, onPicked) {
       groundHeight,
       heightAboveGround,
       estimatedFloor,
+      viewBearingDeg,
     });
   });
 }

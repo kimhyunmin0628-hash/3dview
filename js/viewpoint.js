@@ -1,9 +1,9 @@
 // 클릭한 건물 입면 지점에 카메라를 이동시켜, 그 지점(그 층/그 창문)에서 바라보는 조망을 재현한다.
 //
-// 벽면의 정확한 법선(normal)은 3D 타일 지오메트리에서 직접 얻기 어려우므로,
-// "건물 중심 anchor -> 클릭 지점" 방위각(bearing)을 그 벽면이 바라보는 바깥쪽 방향으로 근사한다.
-// 데모 데이터는 아파트 단지의 대표 좌표를 anchor로 쓰지만, 실제 서비스에서는 동별 정확한
-// 건물 외곽선/무게중심 좌표(건축물대장, vworld 3D 건물 속성 등)로 교체하는 걸 권장한다.
+// 벽면의 정확한 법선(normal)은 3D 타일 지오메트리에서 직접 얻기 어려우므로, buildingPicker.js가
+// 클릭 시점에 "클릭 지점 -> 클릭 당시 카메라 위치" 방위각(picked.viewBearingDeg)을 그 벽면의
+// 바깥쪽 방향으로 근사해서 넘겨준다(Cesium은 카메라를 향한 면만 pick하므로 카메라는 항상
+// 벽 바깥쪽에 있다).
 
 const METERS_PER_DEGREE_LAT = 111320;
 
@@ -16,8 +16,8 @@ function bearingDegrees(lon1, lat1, lon2, lat2) {
   return (toDeg(Math.atan2(y, x)) + 360) % 360;
 }
 
-function flyToViewpoint(viewer, picked, anchor, onComplete) {
-  const headingDeg = bearingDegrees(anchor.lon, anchor.lat, picked.lon, picked.lat);
+function flyToViewpoint(viewer, picked, onComplete) {
+  const headingDeg = picked.viewBearingDeg;
   const headingRad = toRad(headingDeg);
 
   // 클릭 지점에서 바깥으로 2m 더 나가 벽에 파묻히지 않게 하고, 눈높이(1.5m)를 더한다.

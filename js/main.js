@@ -2,7 +2,6 @@ let viewer;
 let vwMap;
 let orbit;
 let savedOverviewState = null;
-let activeBuilding = SAMPLE_APARTMENTS[0]; // 조망 방향 계산용 anchor. 사이드바/검색에서 위치를 고르면 갱신된다.
 
 // 조망 모드(벽면 지점에서 보기)인 동안 true. vworld가 매 프레임 자체적으로
 // screenSpaceCameraController.enableInputs를 true로 되돌려놓기 때문에(camera.flyTo 완료 시점뿐 아니라
@@ -57,7 +56,7 @@ function showInfoCard(picked) {
     savedOverviewState = saveCameraState(viewer);
     viewpointModeActive = true; // 조망 모드: 마우스 조작 대신 방향 패드만 사용
     runCameraActionAfterClickSettles(() => {
-      flyToViewpoint(viewer, picked, activeBuilding, ({ destination, headingRad }) => {
+      flyToViewpoint(viewer, picked, ({ destination, headingRad }) => {
         orbit = createViewpointLookControl(viewer, destination, headingRad);
       });
     });
@@ -135,7 +134,6 @@ function setupSearchForm() {
         }
         showToast(`"${loc.title}"(으)로 이동합니다.`);
         runCameraActionAfterClickSettles(() => flyToLocation(loc.lon, loc.lat));
-        activeBuilding = { name: loc.title, region: "", lon: loc.lon, lat: loc.lat };
       })
       .catch((err) => {
         console.error(err);
