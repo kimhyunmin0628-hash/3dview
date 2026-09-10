@@ -93,8 +93,9 @@ async function bootstrap() {
       runCameraActionAfterClickSettles(() => flyToOverview(viewer, target));
       viewpointModeActive = false; // 전체보기: 마우스 조작 복원
       orbit = createOrbitControl(viewer);
+      // 전체보기로 돌아가면 배너 자체를 숨긴다. 다음 벽면 클릭 시 showInfoCard가 다시 띄운다.
+      document.getElementById("info-card").classList.remove("visible");
       document.getElementById("btn-back").style.display = "none";
-      document.getElementById("btn-view").style.display = "inline-block";
     };
 
     document.getElementById("btn-close-info").onclick = () => {
