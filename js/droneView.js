@@ -39,9 +39,9 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
   // 회전뷰 그리기 중간 상태
   let dragStartScreen = null;
   let dragStartGeo = null;
-  let pendingOrbitCenter = null; // 드래그로 정한 타원의 기하학적 중심(=시선의 중심점과는 별개)
-  let pendingSemiLon = 0;
-  let pendingSemiLat = 0;
+  let pendingSemiLon = 0; // 드래그로 정한 궤도의 동서 반지름(도)
+  let pendingSemiLat = 0; // 드래그로 정한 궤도의 남북 반지름(도)
+  let pendingRadiusPx = null; // 위와 짝을 이루는 화면 픽셀 반지름({rx,ry}) - 가운데 점에 재중심 미리보기용
   let lineScreenPoints = []; // 직선뷰 시작/끝점의 화면 좌표(경로 선을 그려서 보여주기 위한 용도)
 
   let lineStartAltitudeM = DRONE_DEFAULT_LINE_ALTITUDE_M; // 직선뷰 시작점의 고도(지면 위, m)
@@ -91,18 +91,19 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     [a, b].forEach((p) => drawMarker(p));
   }
 
-  function drawEllipsePreview(a, b) {
-    clearOverlayCanvas();
+  function drawEllipseAt(cx, cy, rx, ry) {
     const ctx = overlayCanvas.getContext("2d");
-    const cx = (a.x + b.x) / 2;
-    const cy = (a.y + b.y) / 2;
-    const rx = Math.max(1, Math.abs(a.x - b.x) / 2);
-    const ry = Math.max(1, Math.abs(a.y - b.y) / 2);
     ctx.strokeStyle = "#3b82f6";
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy, Math.max(1, rx), Math.max(1, ry), 0, 0, Math.PI * 2);
     ctx.stroke();
+  }
+
+  // 드래그 중 미리보기: 드래그한 사각 범위에 딱 맞는 타원을 그린다.
+  function drawEllipsePreview(a, b) {
+    clearOverlayCanvas();
+    drawEllipseAt((a.x + b.x) / 2, (a.y + b.y) / 2, Math.abs(a.x - b.x) / 2, Math.abs(a.y - b.y) / 2);
   }
 
   function canvasPointFromEvent(e) {
@@ -136,13 +137,16 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     lookMode = "forward";
   }
 
-  function buildOrbitFlightPath(centerGeo, semiLonDeg, semiLatDeg, lookAtGeo) {
+  // 궤도의 중심은 드래그로 그린 타원 자체의 중심이 아니라, 나중에 클릭하는 "가운데 점"(lookAtGeo)이다.
+  // 드래그는 궤도의 크기(반지름)만 정하고, 실제 원/타원은 항상 그 가운데 점을 고르게 감싸도록
+  // 다시 그 점을 중심으로 그린다. (드래그 중심과 가운데 점이 다르면 한쪽으로 치우친 궤도가 되어버림)
+  function buildOrbitFlightPath(semiLonDeg, semiLatDeg, lookAtGeo) {
     const ringPoints = [];
     for (let i = 0; i <= DRONE_ORBIT_SAMPLES; i++) {
       const theta = (i / DRONE_ORBIT_SAMPLES) * Math.PI * 2;
       ringPoints.push({
-        lon: centerGeo.lon + semiLonDeg * Math.cos(theta),
-        lat: centerGeo.lat + semiLatDeg * Math.sin(theta),
+        lon: lookAtGeo.lon + semiLonDeg * Math.cos(theta),
+        lat: lookAtGeo.lat + semiLatDeg * Math.sin(theta),
       });
     }
     flightPath = ringPoints.map((p) => {
@@ -217,9 +221,9 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     groundPoints = [];
     dragStartScreen = null;
     dragStartGeo = null;
-    pendingOrbitCenter = null;
     pendingSemiLon = 0;
     pendingSemiLat = 0;
+    pendingRadiusPx = null;
     lineScreenPoints = [];
     clearOverlayCanvas();
   }
@@ -276,9 +280,10 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
         if (callbacks.onTooShort) callbacks.onTooShort();
         return;
       }
-      pendingOrbitCenter = { lon: (dragStartGeo.lon + geo.lon) / 2, lat: (dragStartGeo.lat + geo.lat) / 2 };
+      // 드래그는 궤도의 "크기"만 정한다(반지름). 실제 중심은 다음 단계에서 클릭하는 가운데 점이다.
       pendingSemiLon = Math.abs(dragStartGeo.lon - geo.lon) / 2;
       pendingSemiLat = Math.abs(dragStartGeo.lat - geo.lat) / 2;
+      pendingRadiusPx = { rx: Math.abs(dx) / 2, ry: Math.abs(dy) / 2 };
       dragStartScreen = null;
       dragStartGeo = null;
       setMode("orbit-center");
@@ -288,8 +293,11 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     if (mode === "orbit-center") {
       const geo = projectToGround(pt);
       if (!geo) return;
-      buildOrbitFlightPath(pendingOrbitCenter, pendingSemiLon, pendingSemiLat, geo);
-      drawMarker(pt); // 궤도(타원)는 이미 그려져 있으니 지우지 않고, 중심점 표시만 추가
+      buildOrbitFlightPath(pendingSemiLon, pendingSemiLat, geo);
+      // 궤도를 클릭한 가운데 점 기준으로 다시 그려서, 실제로 날아갈 모양을 정확히 보여준다.
+      clearOverlayCanvas();
+      if (pendingRadiusPx) drawEllipseAt(pt.x, pt.y, pendingRadiusPx.rx, pendingRadiusPx.ry);
+      drawMarker(pt);
       setMode("ready");
       return;
     }
