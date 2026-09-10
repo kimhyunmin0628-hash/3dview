@@ -58,48 +58,55 @@
   </div>
 
   <div id="drone-panel" class="panel">
-    <div id="drone-status" class="drone-panel-status"></div>
-    <div id="drone-choose-actions" class="actions">
-      <button id="btn-drone-line" class="action-btn" type="button">➡ 직선뷰</button>
-      <button id="btn-drone-manual" class="action-btn" type="button">🎮 드론수동조정</button>
+    <div class="drone-panel-header">
+      <div id="drone-status" class="drone-panel-status"></div>
+      <button id="btn-drone-panel-collapse" class="drone-panel-collapse-btn" type="button" aria-label="안내 최소화">
+        <span class="drone-panel-collapse-icon">▾</span>
+      </button>
     </div>
-    <div id="drone-line-start-options">
-      <div class="drone-speed-row">
-        <label for="drone-line-start-altitude">시작점 고도(지면 위) <span id="drone-line-start-altitude-value">80</span> m</label>
-        <input id="drone-line-start-altitude" type="range" min="1" max="300" step="5" value="80" />
+    <div id="drone-panel-body">
+      <div id="drone-choose-actions" class="actions">
+        <button id="btn-drone-line" class="action-btn" type="button">➡ 직선뷰</button>
+        <button id="btn-drone-manual" class="action-btn" type="button">🎮 드론수동조정</button>
       </div>
-    </div>
-    <div id="drone-line-end-options">
-      <div class="drone-speed-row">
-        <label for="drone-line-end-altitude">끝점 고도(지면 위) <span id="drone-line-end-altitude-value">80</span> m</label>
-        <input id="drone-line-end-altitude" type="range" min="1" max="300" step="5" value="80" />
+      <div id="drone-line-start-options">
+        <div class="drone-speed-row">
+          <label for="drone-line-start-altitude">시작점 고도(지면 위) <span id="drone-line-start-altitude-value">80</span> m</label>
+          <input id="drone-line-start-altitude" type="range" min="1" max="300" step="5" value="80" />
+        </div>
       </div>
-    </div>
-    <div id="drone-play-controls">
-      <div class="drone-speed-row">
-        <label for="drone-speed">속도 <span id="drone-speed-value">15</span> m/s</label>
-        <input id="drone-speed" type="range" min="5" max="100" step="1" value="15" />
+      <div id="drone-line-end-options">
+        <div class="drone-speed-row">
+          <label for="drone-line-end-altitude">끝점 고도(지면 위) <span id="drone-line-end-altitude-value">80</span> m</label>
+          <input id="drone-line-end-altitude" type="range" min="1" max="300" step="5" value="80" />
+        </div>
+      </div>
+      <div id="drone-play-controls">
+        <div class="drone-speed-row">
+          <label for="drone-speed">속도 <span id="drone-speed-value">15</span> m/s</label>
+          <input id="drone-speed" type="range" min="5" max="100" step="1" value="15" />
+        </div>
+        <div class="actions">
+          <button id="btn-drone-play" class="action-btn" type="button" disabled>▶ 재생</button>
+          <button id="btn-drone-redraw" class="action-btn secondary" type="button">다시 그리기</button>
+        </div>
+      </div>
+      <div id="drone-manual-options">
+        <div class="drone-panel-status">🕹️ 조작법</div>
+        <div class="drone-manual-help">
+          방향키: 전진 / 후진 / 좌우이동<br />
+          Shift+방향키: 화면(시야) 방향 전환<br />
+          W / S: 상승 / 하강<br />
+          Space: 정지
+        </div>
+        <div class="drone-speed-row">
+          <label for="drone-manual-speed">이동 속도 <span id="drone-manual-speed-value">12</span> m/s</label>
+          <input id="drone-manual-speed" type="range" min="2" max="100" step="1" value="12" />
+        </div>
       </div>
       <div class="actions">
-        <button id="btn-drone-play" class="action-btn" type="button" disabled>▶ 재생</button>
-        <button id="btn-drone-redraw" class="action-btn secondary" type="button">다시 그리기</button>
+        <button id="btn-drone-exit" class="action-btn secondary" type="button">✕ 종료</button>
       </div>
-    </div>
-    <div id="drone-manual-options">
-      <div class="drone-panel-status">🕹️ 조작법</div>
-      <div class="drone-manual-help">
-        방향키: 전진 / 후진 / 좌우이동<br />
-        Shift+방향키: 화면(시야) 방향 전환<br />
-        W / S: 상승 / 하강<br />
-        Space: 정지
-      </div>
-      <div class="drone-speed-row">
-        <label for="drone-manual-speed">이동 속도 <span id="drone-manual-speed-value">12</span> m/s</label>
-        <input id="drone-manual-speed" type="range" min="2" max="100" step="1" value="12" />
-      </div>
-    </div>
-    <div class="actions">
-      <button id="btn-drone-exit" class="action-btn secondary" type="button">✕ 종료</button>
     </div>
   </div>
 

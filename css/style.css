@@ -175,6 +175,57 @@ html, body {
   display: block;
 }
 
+/* 드론수동조정 중에는 안내 패널을 우측 하단으로 옮겨서, 위쪽 조작 화면을 덜 가리게 한다. */
+#drone-panel.manual-mode {
+  top: auto;
+  bottom: 24px;
+}
+
+.drone-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.drone-panel-collapse-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #f2f4f8;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.drone-panel-collapse-btn:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.drone-panel-collapse-icon {
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+/* 최소화 상태: 본문(조작법/슬라이더/버튼)을 숨기고 상태 문구 + 펼치기 버튼만 남긴다. */
+#drone-panel.collapsed #drone-panel-body {
+  display: none;
+}
+
+#drone-panel.collapsed .drone-panel-header {
+  margin-bottom: 0;
+}
+
+#drone-panel.collapsed .drone-panel-collapse-icon {
+  transform: rotate(-90deg);
+}
+
 .drone-panel-status {
   font-size: 12px;
   color: #a7b0c0;

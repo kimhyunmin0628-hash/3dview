@@ -270,6 +270,7 @@ function setupDroneView() {
   const lineEndOptionsEl = document.getElementById("drone-line-end-options");
   const manualOptionsEl = document.getElementById("drone-manual-options");
   const playControlsEl = document.getElementById("drone-play-controls");
+  const btnCollapse = document.getElementById("btn-drone-panel-collapse");
   const btnToggle = document.getElementById("btn-drone-view");
   const btnLine = document.getElementById("btn-drone-line");
   const btnManual = document.getElementById("btn-drone-manual");
@@ -288,6 +289,8 @@ function setupDroneView() {
   drone = createDroneView(viewer, overlay, {
     onModeChange(mode) {
       panel.classList.toggle("visible", mode !== "idle");
+      panel.classList.toggle("manual-mode", mode === "manual");
+      if (mode === "idle") panel.classList.remove("collapsed"); // 다음에 열 때는 항상 펼쳐진 상태로 시작
       overlay.classList.toggle("active", drone.isWaitingForInput());
       document.getElementById("orbit-panel").style.display = mode === "idle" ? "flex" : "none";
 
@@ -342,6 +345,11 @@ function setupDroneView() {
   btnRedraw.onclick = () => drone.startChoosing();
 
   btnExit.onclick = () => drone.exit();
+
+  btnCollapse.onclick = () => {
+    const collapsed = panel.classList.toggle("collapsed");
+    btnCollapse.setAttribute("aria-label", collapsed ? "안내 펼치기" : "안내 최소화");
+  };
 
   lineStartAltitudeInput.addEventListener("input", () => {
     const m = Number(lineStartAltitudeInput.value);
