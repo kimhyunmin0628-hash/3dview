@@ -1,6 +1,7 @@
 let viewer;
 let vwMap;
 let orbit;
+let drone;
 let savedOverviewState = null;
 
 // 조망 모드(벽면 지점에서 보기)인 동안 true. vworld가 매 프레임 자체적으로
@@ -62,6 +63,7 @@ function showInfoCard(picked) {
     });
     document.getElementById("btn-view").style.display = "none";
     document.getElementById("btn-back").style.display = "inline-block";
+    document.getElementById("btn-drone-view").style.display = "none"; // 드론뷰는 전체보기 전용
   };
 }
 
@@ -77,16 +79,18 @@ async function bootstrap() {
     orbit = createOrbitControl(viewer);
 
     viewer.scene.postRender.addEventListener(() => {
-      viewer.scene.screenSpaceCameraController.enableInputs = !viewpointModeActive;
+      viewer.scene.screenSpaceCameraController.enableInputs = !viewpointModeActive && !drone.isActive();
     });
 
     enableBuildingViewPicker(viewer, vwMap, (picked) => {
+      if (drone.isActive()) return; // 드론뷰 그리기/재생 중에는 건물 클릭을 무시한다
       showInfoCard(picked);
     });
 
     setupSearchForm();
     setupOrbitSliders();
     setupDpadDrag();
+    setupDroneView();
 
     document.getElementById("btn-back").onclick = () => {
       const target = savedOverviewState;
@@ -96,6 +100,7 @@ async function bootstrap() {
       // 전체보기로 돌아가면 배너 자체를 숨긴다. 다음 벽면 클릭 시 showInfoCard가 다시 띄운다.
       document.getElementById("info-card").classList.remove("visible");
       document.getElementById("btn-back").style.display = "none";
+      document.getElementById("btn-drone-view").style.display = "inline-block";
     };
 
     document.getElementById("btn-close-info").onclick = () => {
@@ -164,6 +169,7 @@ function setupOrbitSliders() {
 
   function startRepeat(step) {
     stopRepeat();
+    if (drone.isActive()) return; // 드론뷰 중엔 방향 패드로 궤도를 돌리지 않는다
     if (!orbit.begin()) return;
     step();
     repeatId = setInterval(step, REPEAT_MS);
@@ -239,6 +245,142 @@ function setupDpadDrag() {
       dragging = false;
     })
   );
+}
+
+// 드론뷰: "드론뷰" 버튼을 누르면 직선뷰/회전뷰 중 하나를 고르고, 그에 맞는 방식으로 지도를
+// 클릭/드래그해서 경로를 정하면, 재생 시 그 경로를 따라 날아가며(직선뷰: 진행방향을 보고,
+// 회전뷰: 지정한 중심점을 계속 바라보며) 촬영하듯 카메라가 움직인다.
+const DRONE_STATUS_TEXT = {
+  choosing: "직선뷰 또는 회전뷰를 선택하세요",
+  "line-start": "지도에서 비행을 시작할 지점을 클릭하세요",
+  "line-end": "이제 도착 지점을 클릭하세요",
+  "orbit-draw": "지도를 마우스로 누른 채 드래그해서 회전 궤도(원 또는 타원)를 그려보세요",
+  "orbit-center": "회전하는 동안 계속 바라볼 중심 지점을 클릭하세요",
+  ready: "경로가 준비됐습니다. 재생을 눌러보세요",
+  playing: "드론이 경로를 비행 중입니다",
+};
+
+// 시작점/끝점 고도 슬라이더(직선뷰) / 회전 고도 슬라이더(회전뷰)를 보여줄 단계들.
+const DRONE_LINE_OPTION_MODES = ["line-start", "line-end"];
+const DRONE_ORBIT_OPTION_MODES = ["orbit-draw", "orbit-center"];
+
+function setupDroneView() {
+  const overlay = document.getElementById("drone-overlay");
+  const panel = document.getElementById("drone-panel");
+  const statusEl = document.getElementById("drone-status");
+  const chooseActionsEl = document.getElementById("drone-choose-actions");
+  const lineOptionsEl = document.getElementById("drone-line-options");
+  const orbitOptionsEl = document.getElementById("drone-orbit-options");
+  const playControlsEl = document.getElementById("drone-play-controls");
+  const btnToggle = document.getElementById("btn-drone-view");
+  const btnLine = document.getElementById("btn-drone-line");
+  const btnOrbit = document.getElementById("btn-drone-orbit");
+  const btnPlay = document.getElementById("btn-drone-play");
+  const btnRedraw = document.getElementById("btn-drone-redraw");
+  const btnExit = document.getElementById("btn-drone-exit");
+  const speedInput = document.getElementById("drone-speed");
+  const speedValue = document.getElementById("drone-speed-value");
+  const lineStartAltitudeInput = document.getElementById("drone-line-start-altitude");
+  const lineStartAltitudeValue = document.getElementById("drone-line-start-altitude-value");
+  const lineEndAltitudeInput = document.getElementById("drone-line-end-altitude");
+  const lineEndAltitudeValue = document.getElementById("drone-line-end-altitude-value");
+  const orbitAltitudeInput = document.getElementById("drone-orbit-altitude");
+  const orbitAltitudeValue = document.getElementById("drone-orbit-altitude-value");
+  const centerAltitudeInput = document.getElementById("drone-center-altitude");
+  const centerAltitudeValue = document.getElementById("drone-center-altitude-value");
+
+  drone = createDroneView(viewer, overlay, {
+    onModeChange(mode) {
+      panel.classList.toggle("visible", mode !== "idle");
+      overlay.classList.toggle("active", drone.isWaitingForInput());
+      document.getElementById("orbit-panel").style.display = mode === "idle" ? "flex" : "none";
+
+      statusEl.textContent = DRONE_STATUS_TEXT[mode] || "";
+      chooseActionsEl.style.display = mode === "choosing" ? "flex" : "none";
+      lineOptionsEl.style.display = DRONE_LINE_OPTION_MODES.indexOf(mode) !== -1 ? "block" : "none";
+      orbitOptionsEl.style.display = DRONE_ORBIT_OPTION_MODES.indexOf(mode) !== -1 ? "block" : "none";
+      playControlsEl.style.display = mode === "ready" || mode === "playing" ? "block" : "none";
+
+      if (mode === "ready") {
+        btnPlay.disabled = false;
+        btnPlay.textContent = "▶ 재생";
+      } else if (mode === "playing") {
+        btnPlay.disabled = false;
+        btnPlay.textContent = "⏸ 정지";
+      }
+    },
+    onTooShort() {
+      showToast("궤도가 너무 작습니다. 다시 그려주세요.", true);
+    },
+    onFinished() {
+      showToast("드론 비행이 끝났습니다.");
+    },
+  });
+
+  btnToggle.onclick = () => {
+    document.getElementById("info-card").classList.remove("visible");
+    drone.startChoosing();
+  };
+
+  btnLine.onclick = () => {
+    // 슬라이더 초기값을 드론 컨트롤에도 동기화해둔다.
+    drone.setLineStartAltitude(Number(lineStartAltitudeInput.value));
+    drone.setLineEndAltitude(Number(lineEndAltitudeInput.value));
+    drone.chooseLine();
+  };
+  btnOrbit.onclick = () => {
+    drone.setOrbitAltitude(Number(orbitAltitudeInput.value));
+    drone.setLookAtAltitude(Number(centerAltitudeInput.value));
+    drone.chooseOrbit();
+  };
+
+  btnPlay.onclick = () => {
+    if (drone.getMode() === "playing") drone.pause();
+    else drone.play();
+  };
+
+  // 다시 그리기는 직선뷰/회전뷰를 다시 고르는 단계로 돌아간다.
+  btnRedraw.onclick = () => drone.startChoosing();
+
+  btnExit.onclick = () => drone.exit();
+
+  lineStartAltitudeInput.addEventListener("input", () => {
+    const m = Number(lineStartAltitudeInput.value);
+    lineStartAltitudeValue.textContent = m;
+    drone.setLineStartAltitude(m);
+  });
+
+  lineEndAltitudeInput.addEventListener("input", () => {
+    const m = Number(lineEndAltitudeInput.value);
+    lineEndAltitudeValue.textContent = m;
+    drone.setLineEndAltitude(m);
+  });
+
+  orbitAltitudeInput.addEventListener("input", () => {
+    const m = Number(orbitAltitudeInput.value);
+    orbitAltitudeValue.textContent = m;
+    drone.setOrbitAltitude(m);
+  });
+
+  centerAltitudeInput.addEventListener("input", () => {
+    const m = Number(centerAltitudeInput.value);
+    centerAltitudeValue.textContent = m;
+    drone.setLookAtAltitude(m);
+  });
+
+  speedInput.addEventListener("input", () => {
+    const mps = Number(speedInput.value);
+    speedValue.textContent = mps;
+    drone.setSpeed(mps);
+  });
+
+  overlay.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    drone.handlePointerDown(e);
+  });
+  overlay.addEventListener("pointermove", (e) => drone.handlePointerMove(e));
+  window.addEventListener("pointerup", (e) => drone.handlePointerUp(e));
+  window.addEventListener("resize", () => drone.resizeOverlay());
 }
 
 // 주의: vworld는 UI 버튼 클릭에도 자체적으로 반응해서(같은 클릭 이벤트에 얹혀) 카메라를

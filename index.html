@@ -13,9 +13,16 @@
 </head>
 <body>
   <div id="vmap"></div>
+  <canvas id="drone-overlay"></canvas>
 
   <div id="sidebar" class="panel">
-    <h1>3D 지도 및 경관 검색</h1>
+    <div class="sidebar-header">
+      <h1>3D 지도 및 경관 검색</h1>
+      <button id="btn-drone-view" class="icon-btn" type="button" aria-label="드론뷰">
+        🛸
+        <span class="icon-btn-tooltip">드론뷰</span>
+      </button>
+    </div>
     <form id="search-form" class="search-form">
       <input id="search-input" type="text" placeholder="아파트 단지명 또는 동(행정구역) 입력" autocomplete="off" />
       <button type="submit" class="action-btn">검색</button>
@@ -44,15 +51,57 @@
     </div>
   </div>
 
+  <div id="drone-panel" class="panel">
+    <div id="drone-status" class="drone-panel-status"></div>
+    <div id="drone-choose-actions" class="actions">
+      <button id="btn-drone-line" class="action-btn" type="button">➡ 직선뷰</button>
+      <button id="btn-drone-orbit" class="action-btn" type="button">🔄 회전뷰</button>
+    </div>
+    <div id="drone-line-options">
+      <div class="drone-speed-row">
+        <label for="drone-line-start-altitude">시작점 고도(지면 위) <span id="drone-line-start-altitude-value">80</span> m</label>
+        <input id="drone-line-start-altitude" type="range" min="1" max="300" step="5" value="80" />
+      </div>
+      <div class="drone-speed-row">
+        <label for="drone-line-end-altitude">끝점 고도(지면 위) <span id="drone-line-end-altitude-value">80</span> m</label>
+        <input id="drone-line-end-altitude" type="range" min="1" max="300" step="5" value="80" />
+      </div>
+    </div>
+    <div id="drone-orbit-options">
+      <div class="drone-speed-row">
+        <label for="drone-orbit-altitude">회전 고도(지면 위) <span id="drone-orbit-altitude-value">80</span> m</label>
+        <input id="drone-orbit-altitude" type="range" min="10" max="300" step="5" value="80" />
+      </div>
+      <div class="drone-speed-row">
+        <label for="drone-center-altitude">중심점 고도(지면 위) <span id="drone-center-altitude-value">20</span> m</label>
+        <input id="drone-center-altitude" type="range" min="0" max="200" step="5" value="20" />
+      </div>
+    </div>
+    <div id="drone-play-controls">
+      <div class="drone-speed-row">
+        <label for="drone-speed">속도 <span id="drone-speed-value">15</span> m/s</label>
+        <input id="drone-speed" type="range" min="5" max="60" step="1" value="15" />
+      </div>
+      <div class="actions">
+        <button id="btn-drone-play" class="action-btn" type="button" disabled>▶ 재생</button>
+        <button id="btn-drone-redraw" class="action-btn secondary" type="button">다시 그리기</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="btn-drone-exit" class="action-btn secondary" type="button">✕ 종료</button>
+    </div>
+  </div>
+
   <div id="status-toast" class="panel"></div>
 
-  <!-- 순서 중요: config -> terrain -> vworldBootstrap -> buildingPicker -> viewpoint -> orbitControl -> search -> main -->
+  <!-- 순서 중요: config -> terrain -> vworldBootstrap -> buildingPicker -> viewpoint -> orbitControl -> droneView -> search -> main -->
   <script src="js/config.js"></script>
   <script src="js/terrain.js"></script>
   <script src="js/vworldBootstrap.js"></script>
   <script src="js/buildingPicker.js"></script>
   <script src="js/viewpoint.js"></script>
   <script src="js/orbitControl.js"></script>
+  <script src="js/droneView.js"></script>
   <script src="js/search.js"></script>
   <script src="js/main.js"></script>
 </body>
