@@ -77,6 +77,13 @@ html, body {
   border-color: #3b82f6;
 }
 
+.sidebar-header-icons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .icon-btn {
   position: relative;
   flex-shrink: 0;
@@ -96,6 +103,25 @@ html, body {
 
 .icon-btn:hover {
   background: rgba(255, 255, 255, 0.22);
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.icon-btn.recording {
+  background: rgba(239, 68, 68, 0.25);
+}
+
+.icon-btn.recording .icon-btn-glyph {
+  color: #ef4444;
+  animation: recordPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes recordPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 .icon-btn-tooltip {
@@ -162,9 +188,17 @@ html, body {
 
 #drone-choose-actions,
 #drone-play-controls,
-#drone-line-options,
-#drone-orbit-options {
+#drone-line-start-options,
+#drone-line-end-options,
+#drone-manual-options {
   display: none;
+}
+
+.drone-manual-help {
+  font-size: 11px;
+  color: #a7b0c0;
+  line-height: 1.6;
+  margin-bottom: 10px;
 }
 
 .drone-speed-row {
