@@ -149,55 +149,93 @@ function setupSearchForm() {
   });
 }
 
-// dpad 버튼은 항상 현재 컨트롤(orbit 변수)의 값을 읽어 한 스텝만큼 더한 뒤 다시 써준다.
-// orbit은 전체보기에서는 createOrbitControl(피벗 중심 궤도), 조망 모드에서는
+// dpad 버튼은 항상 현재 컨트롤(orbit 변수)의 값을 읽어 그 프레임의 경과 시간(dt)만큼 이동시킨
+// 뒤 다시 써준다. orbit은 전체보기에서는 createOrbitControl(피벗 중심 궤도), 조망 모드에서는
 // createViewpointLookControl(고정 위치 제자리 회전)로 교체되는데, 두 컨트롤 다 같은
 // begin/currentHeadingDegrees/currentElevationDegrees/setHeadingDegrees/setElevationDegrees
 // 인터페이스를 구현하고 각자 알아서 각도를 clamp하므로 여기서는 범위를 신경 쓸 필요가 없다.
+// postRender 매 프레임 dt 기반으로 갱신해서(예전의 setInterval 고정 스텝 대신) 버튼을 누르고
+// 있는 동안 끊기지 않고 부드럽게 움직인다. 조망 모드(invertHeading===true)는 전체보기보다
+// 30% 느린 속도로 움직이게 해서 좀 더 차분하게 살펴볼 수 있게 한다.
 function setupOrbitSliders() {
-  const HEADING_STEP_DEG = 3;
-  const PITCH_STEP_DEG = 2;
-  const REPEAT_MS = 60;
+  const HEADING_RATE_DEG_PER_S = 50; // 전체보기: 기존 3deg/60ms 스텝과 같은 체감 속도
+  const PITCH_RATE_DEG_PER_S = 33.3;
+  const VIEWPOINT_SPEED_FACTOR = 0.7; // 조망 모드는 기존 대비 30% 느리게
+  const VIEWPOINT_HEADING_RATE_DEG_PER_S = HEADING_RATE_DEG_PER_S * VIEWPOINT_SPEED_FACTOR;
+  const VIEWPOINT_PITCH_RATE_DEG_PER_S = PITCH_RATE_DEG_PER_S * VIEWPOINT_SPEED_FACTOR;
 
-  let repeatId = null;
+  const held = { left: false, right: false, up: false, down: false };
+  let lastFrameTime = null;
+  let tickRegistered = false;
 
-  function stopRepeat() {
-    if (repeatId !== null) {
-      clearInterval(repeatId);
-      repeatId = null;
+  function anyHeld() {
+    return held.left || held.right || held.up || held.down;
+  }
+
+  function tick() {
+    if (!anyHeld()) {
+      lastFrameTime = null;
+      return;
+    }
+    const now = performance.now();
+    if (lastFrameTime == null) {
+      lastFrameTime = now;
+      return;
+    }
+    const dt = (now - lastFrameTime) / 1000;
+    lastFrameTime = now;
+    if (dt <= 0 || dt > 1) return;
+
+    const headingRate = orbit.invertHeading ? VIEWPOINT_HEADING_RATE_DEG_PER_S : HEADING_RATE_DEG_PER_S;
+    const pitchRate = orbit.invertHeading ? VIEWPOINT_PITCH_RATE_DEG_PER_S : PITCH_RATE_DEG_PER_S;
+    // 조망 모드(orbit.invertHeading===true)에서는 전체보기와 좌/우 버튼의 회전 방향이 반대가 되게 한다.
+    const sign = orbit.invertHeading ? -1 : 1;
+
+    if (held.left || held.right) {
+      const dir = held.left ? 1 : -1;
+      orbit.setHeadingDegrees(orbit.currentHeadingDegrees() + sign * dir * headingRate * dt);
+    }
+    if (held.up || held.down) {
+      const dir = held.up ? 1 : -1;
+      orbit.setElevationDegrees(orbit.currentElevationDegrees() + dir * pitchRate * dt);
     }
   }
 
-  function startRepeat(step) {
-    stopRepeat();
+  function startHeld(key) {
     if (drone.isActive()) return; // 드론뷰 중엔 방향 패드로 궤도를 돌리지 않는다
     if (!orbit.begin()) return;
-    step();
-    repeatId = setInterval(step, REPEAT_MS);
+    held[key] = true;
+    if (!tickRegistered) {
+      tickRegistered = true;
+      viewer.scene.postRender.addEventListener(tick);
+    }
   }
 
-  function bindDpadButton(id, step) {
+  function stopHeld(key) {
+    held[key] = false;
+  }
+
+  function stopAllHeld() {
+    held.left = held.right = held.up = held.down = false;
+  }
+
+  function bindDpadButton(id, key) {
     const el = document.getElementById(id);
     el.addEventListener("pointerdown", (e) => {
       e.preventDefault();
-      startRepeat(step);
+      startHeld(key);
     });
-    ["pointerup", "pointerleave", "pointercancel"].forEach((evt) => el.addEventListener(evt, stopRepeat));
+    ["pointerup", "pointerleave", "pointercancel"].forEach((evt) =>
+      el.addEventListener(evt, () => stopHeld(key))
+    );
   }
 
-  // 조망 모드(orbit.invertHeading===true)에서는 전체보기와 좌/우 버튼의 회전 방향이 반대가 되게 한다.
-  bindDpadButton("dpad-left", () => {
-    const sign = orbit.invertHeading ? -1 : 1;
-    orbit.setHeadingDegrees(orbit.currentHeadingDegrees() + sign * HEADING_STEP_DEG);
-  });
-  bindDpadButton("dpad-right", () => {
-    const sign = orbit.invertHeading ? -1 : 1;
-    orbit.setHeadingDegrees(orbit.currentHeadingDegrees() - sign * HEADING_STEP_DEG);
-  });
-  bindDpadButton("dpad-up", () => orbit.setElevationDegrees(orbit.currentElevationDegrees() + PITCH_STEP_DEG));
-  bindDpadButton("dpad-down", () => orbit.setElevationDegrees(orbit.currentElevationDegrees() - PITCH_STEP_DEG));
+  bindDpadButton("dpad-left", "left");
+  bindDpadButton("dpad-right", "right");
+  bindDpadButton("dpad-up", "up");
+  bindDpadButton("dpad-down", "down");
 
-  window.addEventListener("pointerup", stopRepeat);
+  window.addEventListener("pointerup", stopAllHeld);
 }
 
 // 방향 패드 가운데 손잡이(.dpad-center)를 눌러서 패널 전체(#orbit-panel)를 화면 어디로든
