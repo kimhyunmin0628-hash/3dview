@@ -252,6 +252,19 @@ function setupDpadDrag() {
 // - 직선뷰: 시작점 고도를 정하고 시작점을 클릭 -> 끝점 고도를 정하고 끝점을 클릭하면,
 //   재생 시 그 사이를 직선으로 이동하며 진행 방향을 본다.
 // - 드론수동조정: 키보드로 직접 드론을 조종하면서 촬영한다(안내 문구는 droneView.js 참고).
+// vworld 3D는 지명/POI 라벨을 별도의 3D Tileset(url에 "/poi/" 포함, 예: POI_BASE, POI_BOUND)으로
+// 렌더링한다. 인덱스는 로드 시점에 따라 바뀔 수 있어서 매번 url로 찾아서 켜고 끈다.
+function setPoiLabelsVisible(visible) {
+  const primitives = viewer.scene.primitives;
+  for (let i = 0; i < primitives.length; i++) {
+    const p = primitives.get(i);
+    const url = p._url || p.url;
+    if (typeof url === "string" && url.includes("/poi/")) {
+      p.show = visible;
+    }
+  }
+}
+
 const DRONE_STATUS_TEXT = {
   choosing: "직선뷰 또는 드론수동조정을 선택하세요",
   "line-start": "먼저 위 슬라이더로 시작점 고도를 정한 뒤, 지도에서 시작할 지점을 클릭하세요",
@@ -291,6 +304,7 @@ function setupDroneView() {
       panel.classList.toggle("visible", mode !== "idle");
       panel.classList.toggle("manual-mode", mode === "manual");
       if (mode === "idle") panel.classList.remove("collapsed"); // 다음에 열 때는 항상 펼쳐진 상태로 시작
+      setPoiLabelsVisible(mode === "idle"); // 드론뷰 동안에는 지명/POI 글자를 없애서 촬영 화면을 깔끔하게 유지
       overlay.classList.toggle("active", drone.isWaitingForInput());
       document.getElementById("orbit-panel").style.display = mode === "idle" ? "flex" : "none";
 
