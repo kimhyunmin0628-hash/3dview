@@ -67,27 +67,7 @@ function createScreenRecorder(canvas) {
   };
 }
 
-// Blob을 파일로 저장한다. File System Access API를 지원하는 브라우저(Chrome/Edge)에서는
-// 파일명과 저장 폴더를 직접 고르는 네이티브 저장 대화상자를 띄우고, 지원하지 않으면
-// 기본 다운로드 폴더로 저장하는 방식으로 대체한다(그 경우 폴더 지정은 불가).
-async function saveBlobAsFile(blob, suggestedName) {
-  if (typeof window.showSaveFilePicker === "function") {
-    const ext = suggestedName.split(".").pop();
-    const handle = await window.showSaveFilePicker({
-      suggestedName,
-      types: [
-        {
-          description: ext.toUpperCase() + " 비디오",
-          accept: { [blob.type || "video/*"]: ["." + ext] },
-        },
-      ],
-    });
-    const writable = await handle.createWritable();
-    await writable.write(blob);
-    await writable.close();
-    return "picker";
-  }
-
+function downloadBlob(blob, suggestedName) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -96,5 +76,38 @@ async function saveBlobAsFile(blob, suggestedName) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Blob을 파일로 저장한다. File System Access API를 지원하는 브라우저(Chrome/Edge)에서는
+// 파일명과 저장 폴더를 직접 고르는 네이티브 저장 대화상자를 띄우고, 지원하지 않거나 실패하면
+// 기본 다운로드 폴더로 저장하는 방식으로 대체한다(그 경우 폴더 지정은 불가).
+async function saveBlobAsFile(blob, suggestedName) {
+  if (typeof window.showSaveFilePicker === "function") {
+    const ext = suggestedName.split(".").pop();
+    // accept의 키는 파라미터 없는 순수 MIME 타입이어야 한다(예: "video/mp4;codecs=avc1"처럼
+    // 코덱 파라미터가 붙은 값을 넘기면 File System Access API가 거부하고 저장이 실패한다).
+    const baseMimeType = ext === "mp4" ? "video/mp4" : "video/webm";
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName,
+        types: [
+          {
+            description: ext.toUpperCase() + " 비디오",
+            accept: { [baseMimeType]: ["." + ext] },
+          },
+        ],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return "picker";
+    } catch (err) {
+      if (err.name === "AbortError") throw err; // 사용자가 저장 대화상자를 취소한 경우
+      console.warn("showSaveFilePicker 저장 실패, 기본 다운로드로 대체합니다:", err);
+      // 그 외 오류는 기본 다운로드로 대체 저장한다.
+    }
+  }
+
+  downloadBlob(blob, suggestedName);
   return "download";
 }

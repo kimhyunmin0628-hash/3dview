@@ -2,7 +2,7 @@
 //
 // - 직선뷰: 시작점 고도를 먼저 정하고 시작점을 클릭 -> 끝점 고도를 정하고 끝점을 클릭하면,
 //   그 사이를 직선으로 이동하며 진행 방향(정면)을 바라본다.
-// - 드론수동조정: 키보드로 직접 드론을 조종하면서 촬영한다(아래 KEY_HELP_TEXT 참고).
+// - 드론수동조정: 키보드로 직접 드론을 조종하면서 촬영한다(조작법은 index.html의 안내 참고).
 //
 // 직선뷰 그리기는 지도(Cesium) 캔버스 위에 얹은 투명 오버레이 <canvas>(#drone-overlay)에서
 // 처리한다. 평소에는 pointer-events:none이라 지도 조작을 그대로 통과시키고, 입력을 기다리는
@@ -15,15 +15,15 @@ const DRONE_PITCH_DEG = -8; // 직선뷰의 기본(정면 살짝 아래) 시선
 const DRONE_DEFAULT_SPEED_MPS = 15;
 
 // 드론수동조정 설정
-const MANUAL_DEFAULT_SPEED_MPS = 12;
-const MANUAL_TURN_RATE_DEG_PER_S = 60; // 기체 좌우 회전 속도
-const MANUAL_CAM_RATE_DEG_PER_S = 70; // 카메라(짐벌) 좌우/상하 속도
+// 화면 = 드론 카메라 시야라고 생각하고 설계한다: 방향키는 지금 보고 있는 방향 기준으로
+// 전진/후진/좌우 이동(스트레이프)하고, Shift+방향키로 그 "보고 있는 방향" 자체를 돌린다.
+// W/S(상승/하강)와 완전히 같은 방식(누르는 동안 그 속도, 떼면 즉시 0)으로 통일해서
+// 방향키만 뻣뻣하게 느껴지던 문제를 없앤다.
+const MANUAL_DEFAULT_SPEED_MPS = 12; // 전진/후진/좌우이동/상승/하강 공통 속도
+const MANUAL_LOOK_RATE_DEG_PER_S = 70; // Shift+방향키로 시야를 돌리는 속도
 const MANUAL_PITCH_MIN_DEG = -85;
 const MANUAL_PITCH_MAX_DEG = 60;
 const MANUAL_MIN_HEIGHT_M = 1;
-
-const KEY_HELP_TEXT =
-  "방향키: 드론 이동/회전 · Shift+방향키: 카메라 · W/S: 상승/하강 · Space: 정지";
 
 function vec3Lerp(a, b, t) {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
@@ -49,21 +49,21 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
   let lastFrameTime = null;
   let rafId = null;
 
-  // 드론수동조정 상태
+  // 드론수동조정 상태. heading/pitch는 곧 "화면이 보고 있는 방향"이고, 전진/후진/좌우이동은
+  // 항상 이 방향을 기준으로 한다(따로 기체 방향과 카메라 방향을 분리하지 않는다).
   let manualPosition = null; // Cartesian3
-  let manualBodyHeadingDeg = 0; // 기체가 바라보는(=전진 방향) 방위
-  let manualCamYawOffsetDeg = 0; // 기체 방향 기준 카메라(짐벌)의 좌우 오프셋
-  let manualCamPitchDeg = -10;
+  let manualHeadingDeg = 0;
+  let manualPitchDeg = -10;
   let manualSpeedMps = MANUAL_DEFAULT_SPEED_MPS;
   let manualKeys = {
     forward: false,
     backward: false,
-    turnLeft: false,
-    turnRight: false,
-    camUp: false,
-    camDown: false,
-    camLeft: false,
-    camRight: false,
+    strafeLeft: false,
+    strafeRight: false,
+    lookUp: false,
+    lookDown: false,
+    lookLeft: false,
+    lookRight: false,
     up: false,
     down: false,
   };
@@ -244,36 +244,36 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     manualLastFrameTime = now;
     if (dt <= 0 || dt > 1) return; // 탭이 백그라운드에 있다가 돌아온 경우 등 비정상적으로 큰 dt는 무시
 
-    if (manualKeys.turnLeft) manualBodyHeadingDeg -= MANUAL_TURN_RATE_DEG_PER_S * dt;
-    if (manualKeys.turnRight) manualBodyHeadingDeg += MANUAL_TURN_RATE_DEG_PER_S * dt;
-    manualBodyHeadingDeg = ((manualBodyHeadingDeg % 360) + 360) % 360;
+    // Shift+방향키: 화면(시야) 방향 자체를 돌린다. 즉시 반응(누르는 동안 그 속도).
+    if (manualKeys.lookLeft) manualHeadingDeg -= MANUAL_LOOK_RATE_DEG_PER_S * dt;
+    if (manualKeys.lookRight) manualHeadingDeg += MANUAL_LOOK_RATE_DEG_PER_S * dt;
+    manualHeadingDeg = ((manualHeadingDeg % 360) + 360) % 360;
+    if (manualKeys.lookUp) manualPitchDeg = Math.min(MANUAL_PITCH_MAX_DEG, manualPitchDeg + MANUAL_LOOK_RATE_DEG_PER_S * dt);
+    if (manualKeys.lookDown) manualPitchDeg = Math.max(MANUAL_PITCH_MIN_DEG, manualPitchDeg - MANUAL_LOOK_RATE_DEG_PER_S * dt);
 
-    if (manualKeys.camLeft) manualCamYawOffsetDeg -= MANUAL_CAM_RATE_DEG_PER_S * dt;
-    if (manualKeys.camRight) manualCamYawOffsetDeg += MANUAL_CAM_RATE_DEG_PER_S * dt;
-    if (manualKeys.camUp) {
-      manualCamPitchDeg = Math.min(MANUAL_PITCH_MAX_DEG, manualCamPitchDeg + MANUAL_CAM_RATE_DEG_PER_S * dt);
-    }
-    if (manualKeys.camDown) {
-      manualCamPitchDeg = Math.max(MANUAL_PITCH_MIN_DEG, manualCamPitchDeg - MANUAL_CAM_RATE_DEG_PER_S * dt);
-    }
-
-    const moveDir = (manualKeys.forward ? 1 : 0) - (manualKeys.backward ? 1 : 0);
+    // 방향키: 지금 화면이 보고 있는 방향(manualHeadingDeg) 기준으로 전진/후진/좌우이동.
+    // W/S(상승/하강)와 완전히 같은 방식 — 누르는 동안 그 속도로, 떼면 즉시 0.
+    const forwardDir = (manualKeys.forward ? 1 : 0) - (manualKeys.backward ? 1 : 0);
+    const strafeDir = (manualKeys.strafeRight ? 1 : 0) - (manualKeys.strafeLeft ? 1 : 0);
     const vertDir = (manualKeys.up ? 1 : 0) - (manualKeys.down ? 1 : 0);
 
-    if (moveDir !== 0 || vertDir !== 0) {
-      const headingRad = toRad(manualBodyHeadingDeg);
+    if (forwardDir !== 0 || strafeDir !== 0 || vertDir !== 0) {
+      const headingRad = toRad(manualHeadingDeg);
+      const rightRad = headingRad + Math.PI / 2; // 화면이 보는 방향의 오른쪽(스트레이프 방향)
       const geo = cartesianToGeodetic(viewer, manualPosition);
-      const distance = manualSpeedMps * dt * moveDir;
-      const dLat = (distance * Math.cos(headingRad)) / METERS_PER_DEGREE_LAT;
-      const dLon = (distance * Math.sin(headingRad)) / (METERS_PER_DEGREE_LAT * Math.cos(toRad(geo.lat)));
+      const fwdDist = manualSpeedMps * dt * forwardDir;
+      const strafeDist = manualSpeedMps * dt * strafeDir;
+      const dNorth = fwdDist * Math.cos(headingRad) + strafeDist * Math.cos(rightRad);
+      const dEast = fwdDist * Math.sin(headingRad) + strafeDist * Math.sin(rightRad);
+      const dLat = dNorth / METERS_PER_DEGREE_LAT;
+      const dLon = dEast / (METERS_PER_DEGREE_LAT * Math.cos(toRad(geo.lat)));
       const newHeight = Math.max(MANUAL_MIN_HEIGHT_M, geo.height + manualSpeedMps * dt * vertDir);
       manualPosition = geodeticToCartesian(viewer, geo.lon + dLon, geo.lat + dLat, newHeight);
     }
 
-    const renderedHeadingDeg = manualBodyHeadingDeg + manualCamYawOffsetDeg;
     viewer.camera.setView({
       destination: manualPosition,
-      orientation: { heading: toRad(renderedHeadingDeg), pitch: toRad(manualCamPitchDeg), roll: 0 },
+      orientation: { heading: toRad(manualHeadingDeg), pitch: toRad(manualPitchDeg), roll: 0 },
     });
   }
 
@@ -282,20 +282,20 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     let handled = true;
     switch (e.code) {
       case "ArrowUp":
-        if (e.shiftKey) manualKeys.camUp = true;
+        if (e.shiftKey) manualKeys.lookUp = true;
         else manualKeys.forward = true;
         break;
       case "ArrowDown":
-        if (e.shiftKey) manualKeys.camDown = true;
+        if (e.shiftKey) manualKeys.lookDown = true;
         else manualKeys.backward = true;
         break;
       case "ArrowLeft":
-        if (e.shiftKey) manualKeys.camLeft = true;
-        else manualKeys.turnLeft = true;
+        if (e.shiftKey) manualKeys.lookLeft = true;
+        else manualKeys.strafeLeft = true;
         break;
       case "ArrowRight":
-        if (e.shiftKey) manualKeys.camRight = true;
-        else manualKeys.turnRight = true;
+        if (e.shiftKey) manualKeys.lookRight = true;
+        else manualKeys.strafeRight = true;
         break;
       case "KeyW":
         manualKeys.up = true;
@@ -304,32 +304,40 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
         manualKeys.down = true;
         break;
       case "Space":
-        resetManualKeys(); // 정지: 눌려있던 모든 이동 키 상태를 초기화(제자리 호버링)
+        resetManualKeys(); // 정지: 눌려있던 모든 이동 키를 초기화해서 즉시 제자리에 호버링한다.
         break;
       default:
         handled = false;
     }
-    if (handled) e.preventDefault();
+    if (handled) {
+      e.preventDefault();
+      // vworld/Cesium이 방향키에 대해 자체 키보드 핸들러를 갖고 있어서(마우스 컨트롤을 끄는
+      // enableInputs로는 못 막음), 그게 같은 이벤트에 반응해 카메라를 한 프레임 툭 건드리는
+      // "화면이 튀는" 현상이 있었다. 캡처 단계에서 여기서 완전히 멈춰서 vworld의 리스너까지
+      // 이벤트가 도달하지 못하게 한다.
+      e.stopPropagation();
+    }
   }
 
   function handleManualKeyUp(e) {
     if (mode !== "manual") return;
+    let handled = true;
     switch (e.code) {
       case "ArrowUp":
-        manualKeys.camUp = false;
+        manualKeys.lookUp = false;
         manualKeys.forward = false;
         break;
       case "ArrowDown":
-        manualKeys.camDown = false;
+        manualKeys.lookDown = false;
         manualKeys.backward = false;
         break;
       case "ArrowLeft":
-        manualKeys.camLeft = false;
-        manualKeys.turnLeft = false;
+        manualKeys.lookLeft = false;
+        manualKeys.strafeLeft = false;
         break;
       case "ArrowRight":
-        manualKeys.camRight = false;
-        manualKeys.turnRight = false;
+        manualKeys.lookRight = false;
+        manualKeys.strafeRight = false;
         break;
       case "KeyW":
         manualKeys.up = false;
@@ -337,11 +345,16 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
       case "KeyS":
         manualKeys.down = false;
         break;
+      default:
+        handled = false;
     }
+    if (handled) e.stopPropagation();
   }
 
-  window.addEventListener("keydown", handleManualKeyDown);
-  window.addEventListener("keyup", handleManualKeyUp);
+  // 캡처 단계(true)로 등록해야, window에 등록됐을 vworld/Cesium 자체의 키보드 핸들러(버블 단계)보다
+  // 먼저 이벤트를 받아서 stopPropagation으로 거기까지 도달하지 못하게 막을 수 있다.
+  window.addEventListener("keydown", handleManualKeyDown, true);
+  window.addEventListener("keyup", handleManualKeyUp, true);
 
   return {
     // "드론뷰" 토글: 직선뷰/드론수동조정 중 하나를 고르는 단계로 들어간다.
@@ -368,9 +381,8 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
       resetDrawingState();
       const cam = viewer.camera;
       manualPosition = { x: cam.position.x, y: cam.position.y, z: cam.position.z };
-      manualBodyHeadingDeg = toDeg(cam.heading);
-      manualCamYawOffsetDeg = 0;
-      manualCamPitchDeg = Math.max(MANUAL_PITCH_MIN_DEG, Math.min(MANUAL_PITCH_MAX_DEG, toDeg(cam.pitch)));
+      manualHeadingDeg = toDeg(cam.heading);
+      manualPitchDeg = Math.max(MANUAL_PITCH_MIN_DEG, Math.min(MANUAL_PITCH_MAX_DEG, toDeg(cam.pitch)));
       resetManualKeys();
       manualLastFrameTime = null;
       if (!removeManualPostRender) {
@@ -438,10 +450,6 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
 
     getMode() {
       return mode;
-    },
-
-    getKeyHelpText() {
-      return KEY_HELP_TEXT;
     },
 
     handlePointerDown,

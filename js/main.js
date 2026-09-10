@@ -258,7 +258,7 @@ const DRONE_STATUS_TEXT = {
   "line-end": "이제 위 슬라이더로 끝점 고도를 정한 뒤, 도착 지점을 클릭하세요",
   ready: "경로가 준비됐습니다. 재생을 눌러보세요",
   playing: "드론이 경로를 비행 중입니다",
-  manual: "방향키/Shift/W·S/Space로 드론을 조종하세요",
+  manual: "방향키로 이동, Shift+방향키로 시야 전환, W/S로 상승/하강하세요",
 };
 
 function setupDroneView() {
@@ -328,7 +328,9 @@ function setupDroneView() {
 
   btnManual.onclick = () => {
     drone.setManualSpeed(Number(manualSpeedInput.value));
-    drone.chooseManual();
+    // vworld가 버튼 클릭 자체에도 카메라를 살짝 건드리는 특성이 있어서(main.js 하단 주석 참고),
+    // 그 흔들림이 가라앉은 뒤에 현재 위치/방향을 캡처해야 엉뚱한 지점에서 시작하지 않는다.
+    runCameraActionAfterClickSettles(() => drone.chooseManual());
   };
 
   btnPlay.onclick = () => {
