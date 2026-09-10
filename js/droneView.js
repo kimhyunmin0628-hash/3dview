@@ -20,7 +20,7 @@ const DRONE_DEFAULT_SPEED_MPS = 15;
 // W/S(상승/하강)와 완전히 같은 방식(누르는 동안 그 속도, 떼면 즉시 0)으로 통일해서
 // 방향키만 뻣뻣하게 느껴지던 문제를 없앤다.
 const MANUAL_DEFAULT_SPEED_MPS = 12; // 전진/후진/좌우이동/상승/하강 공통 속도
-const MANUAL_LOOK_RATE_DEG_PER_S = 70; // Shift+방향키로 시야를 돌리는 속도
+const MANUAL_LOOK_RATE_DEG_PER_S = 29.4; // Shift+방향키로 시야를 돌리는 속도 (기존 70의 60% -> 다시 70%)
 const MANUAL_PITCH_MIN_DEG = -85;
 const MANUAL_PITCH_MAX_DEG = 60;
 const MANUAL_MIN_HEIGHT_M = 1;
