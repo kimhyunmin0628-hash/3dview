@@ -239,8 +239,8 @@ html, body {
 
 #drone-choose-actions,
 #drone-play-controls,
-#drone-line-start-options,
-#drone-line-end-options,
+#drone-line-count-options,
+#drone-line-altitude-options,
 #drone-manual-options {
   display: none;
 }

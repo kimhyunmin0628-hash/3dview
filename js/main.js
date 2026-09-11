@@ -287,8 +287,8 @@ function setupDpadDrag() {
 }
 
 // 드론뷰: "드론뷰" 버튼을 누르면 직선뷰/드론수동조정 중 하나를 고른다.
-// - 직선뷰: 시작점 고도를 정하고 시작점을 클릭 -> 끝점 고도를 정하고 끝점을 클릭하면,
-//   재생 시 그 사이를 직선으로 이동하며 진행 방향을 본다.
+// - 직선뷰: 지날 지점 수(2~5개)를 고른 뒤, 지점마다 "고도 정하기 -> 지도에서 클릭"을
+//   반복해서 경로를 완성하면, 재생 시 그 지점들을 순서대로 지나며 진행 방향을 본다.
 // - 드론수동조정: 키보드로 직접 드론을 조종하면서 촬영한다(안내 문구는 droneView.js 참고).
 // vworld 3D는 지명/POI 라벨을 별도의 3D Tileset(url에 "/poi/" 포함, 예: POI_BASE, POI_BOUND)으로
 // 렌더링한다. 인덱스는 로드 시점에 따라 바뀔 수 있어서 매번 url로 찾아서 켜고 끈다.
@@ -303,10 +303,11 @@ function setPoiLabelsVisible(visible) {
   }
 }
 
+// line-altitude/line-pick은 "N번째 지점" 같은 동적인 안내가 필요해서 여기 없이
+// setupDroneView()의 onModeChange에서 따로 문구를 만든다.
 const DRONE_STATUS_TEXT = {
   choosing: "직선뷰 또는 드론수동조정을 선택하세요",
-  "line-start": "먼저 위 슬라이더로 시작점 고도를 정한 뒤, 지도에서 시작할 지점을 클릭하세요",
-  "line-end": "이제 위 슬라이더로 끝점 고도를 정한 뒤, 도착 지점을 클릭하세요",
+  "line-count": "몇 개 지점을 지나는 경로로 촬영할까요?",
   ready: "경로가 준비됐습니다. 재생을 눌러보세요",
   playing: "드론이 경로를 비행 중입니다",
   manual: "방향키로 이동, Shift+방향키로 시야 전환, W/S로 상승/하강하세요",
@@ -317,8 +318,8 @@ function setupDroneView() {
   const panel = document.getElementById("drone-panel");
   const statusEl = document.getElementById("drone-status");
   const chooseActionsEl = document.getElementById("drone-choose-actions");
-  const lineStartOptionsEl = document.getElementById("drone-line-start-options");
-  const lineEndOptionsEl = document.getElementById("drone-line-end-options");
+  const lineCountOptionsEl = document.getElementById("drone-line-count-options");
+  const lineAltitudeOptionsEl = document.getElementById("drone-line-altitude-options");
   const manualOptionsEl = document.getElementById("drone-manual-options");
   const playControlsEl = document.getElementById("drone-play-controls");
   const btnCollapse = document.getElementById("btn-drone-panel-collapse");
@@ -330,10 +331,10 @@ function setupDroneView() {
   const btnExit = document.getElementById("btn-drone-exit");
   const speedInput = document.getElementById("drone-speed");
   const speedValue = document.getElementById("drone-speed-value");
-  const lineStartAltitudeInput = document.getElementById("drone-line-start-altitude");
-  const lineStartAltitudeValue = document.getElementById("drone-line-start-altitude-value");
-  const lineEndAltitudeInput = document.getElementById("drone-line-end-altitude");
-  const lineEndAltitudeValue = document.getElementById("drone-line-end-altitude-value");
+  const linePointAltitudeLabel = document.getElementById("drone-line-point-altitude-label");
+  const linePointAltitudeInput = document.getElementById("drone-line-point-altitude");
+  const linePointAltitudeValue = document.getElementById("drone-line-point-altitude-value");
+  const btnLineConfirmAltitude = document.getElementById("btn-drone-line-confirm-altitude");
   const manualSpeedInput = document.getElementById("drone-manual-speed");
   const manualSpeedValue = document.getElementById("drone-manual-speed-value");
 
@@ -346,10 +347,25 @@ function setupDroneView() {
       overlay.classList.toggle("active", drone.isWaitingForInput());
       document.getElementById("orbit-panel").style.display = mode === "idle" ? "flex" : "none";
 
-      statusEl.textContent = DRONE_STATUS_TEXT[mode] || "";
+      if (mode === "line-altitude" || mode === "line-pick") {
+        const pointNo = drone.getLinePointIndex() + 1;
+        const total = drone.getLinePointCount();
+        statusEl.textContent =
+          mode === "line-altitude"
+            ? `${pointNo}번째 지점(총 ${total}개)의 고도를 정한 뒤 "지점 선택하기"를 누르세요`
+            : `${pointNo}번째 지점을 지도에서 클릭하세요`;
+      } else {
+        statusEl.textContent = DRONE_STATUS_TEXT[mode] || "";
+      }
+      if (mode === "line-altitude") {
+        const altitude = drone.getCurrentLinePointAltitude();
+        linePointAltitudeLabel.textContent = `${drone.getLinePointIndex() + 1}번째 지점 고도(지면 위)`;
+        linePointAltitudeInput.value = altitude;
+        linePointAltitudeValue.textContent = altitude;
+      }
       chooseActionsEl.style.display = mode === "choosing" ? "flex" : "none";
-      lineStartOptionsEl.style.display = mode === "line-start" ? "block" : "none";
-      lineEndOptionsEl.style.display = mode === "line-end" ? "block" : "none";
+      lineCountOptionsEl.style.display = mode === "line-count" ? "block" : "none";
+      lineAltitudeOptionsEl.style.display = mode === "line-altitude" ? "block" : "none";
       manualOptionsEl.style.display = mode === "manual" ? "block" : "none";
       playControlsEl.style.display = mode === "ready" || mode === "playing" ? "block" : "none";
 
@@ -374,12 +390,13 @@ function setupDroneView() {
     drone.startChoosing();
   };
 
-  btnLine.onclick = () => {
-    // 슬라이더 초기값을 드론 컨트롤에도 동기화해둔다.
-    drone.setLineStartAltitude(Number(lineStartAltitudeInput.value));
-    drone.setLineEndAltitude(Number(lineEndAltitudeInput.value));
-    drone.chooseLine();
-  };
+  btnLine.onclick = () => drone.chooseLineCount();
+
+  [2, 3, 4, 5].forEach((n) => {
+    document.getElementById(`btn-drone-line-count-${n}`).onclick = () => drone.setLinePointCount(n);
+  });
+
+  btnLineConfirmAltitude.onclick = () => drone.confirmLinePointAltitude();
 
   btnManual.onclick = () => {
     drone.setManualSpeed(Number(manualSpeedInput.value));
@@ -403,16 +420,10 @@ function setupDroneView() {
     btnCollapse.setAttribute("aria-label", collapsed ? "안내 펼치기" : "안내 최소화");
   };
 
-  lineStartAltitudeInput.addEventListener("input", () => {
-    const m = Number(lineStartAltitudeInput.value);
-    lineStartAltitudeValue.textContent = m;
-    drone.setLineStartAltitude(m);
-  });
-
-  lineEndAltitudeInput.addEventListener("input", () => {
-    const m = Number(lineEndAltitudeInput.value);
-    lineEndAltitudeValue.textContent = m;
-    drone.setLineEndAltitude(m);
+  linePointAltitudeInput.addEventListener("input", () => {
+    const m = Number(linePointAltitudeInput.value);
+    linePointAltitudeValue.textContent = m;
+    drone.setLinePointAltitude(m);
   });
 
   manualSpeedInput.addEventListener("input", () => {

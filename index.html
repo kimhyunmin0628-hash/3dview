@@ -69,16 +69,25 @@
         <button id="btn-drone-line" class="action-btn" type="button">➡ 직선뷰</button>
         <button id="btn-drone-manual" class="action-btn" type="button">🎮 드론수동조정</button>
       </div>
-      <div id="drone-line-start-options">
-        <div class="drone-speed-row">
-          <label for="drone-line-start-altitude">시작점 고도(지면 위) <span id="drone-line-start-altitude-value">80</span> m</label>
-          <input id="drone-line-start-altitude" type="range" min="1" max="300" step="5" value="80" />
+      <div id="drone-line-count-options">
+        <div class="drone-panel-status">몇 개 지점을 지나는 경로로 촬영할까요?</div>
+        <div class="actions">
+          <button id="btn-drone-line-count-2" class="action-btn" type="button">2점</button>
+          <button id="btn-drone-line-count-3" class="action-btn" type="button">3점</button>
+          <button id="btn-drone-line-count-4" class="action-btn" type="button">4점</button>
+          <button id="btn-drone-line-count-5" class="action-btn" type="button">5점</button>
         </div>
       </div>
-      <div id="drone-line-end-options">
+      <div id="drone-line-altitude-options">
         <div class="drone-speed-row">
-          <label for="drone-line-end-altitude">끝점 고도(지면 위) <span id="drone-line-end-altitude-value">80</span> m</label>
-          <input id="drone-line-end-altitude" type="range" min="1" max="300" step="5" value="80" />
+          <label for="drone-line-point-altitude">
+            <span id="drone-line-point-altitude-label">지점 고도(지면 위)</span>
+            <span id="drone-line-point-altitude-value">80</span> m
+          </label>
+          <input id="drone-line-point-altitude" type="range" min="1" max="300" step="5" value="80" />
+        </div>
+        <div class="actions">
+          <button id="btn-drone-line-confirm-altitude" class="action-btn" type="button">✓ 이 고도로 지점 선택하기</button>
         </div>
       </div>
       <div id="drone-play-controls">
