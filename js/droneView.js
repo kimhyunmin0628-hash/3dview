@@ -2,7 +2,10 @@
 //
 // - 직선뷰: 몇 개 지점(2~5개)을 지나는 경로로 촬영할지 먼저 고른다. 그 다음 각 지점마다
 //   "고도를 정한다 -> (확정) -> 지도에서 그 지점을 클릭한다"를 순서대로 반복해서 경로를
-//   완성하면, 그 지점들을 순서대로 지나며 진행 방향(정면)을 바라보는 비행 경로가 된다.
+//   완성하면, 그 지점들을 순서대로 곧게 이동하며 진행 방향(정면)을 바라보는 비행이 된다.
+//   지점이 3개 이상이어서 꺾이는 구간이 있으면, 그 지점에 도착했을 때 위치는 멈춘 채로
+//   카메라만 다음 구간 방향으로 천천히 회전한 뒤 다시 직선으로 이동한다(직선 -> 제자리 회전
+//   -> 직선을 반복).
 // - 드론수동조정: 키보드로 직접 드론을 조종하면서 촬영한다(조작법은 index.html의 안내 참고).
 //
 // 직선뷰 그리기는 지도(Cesium) 캔버스 위에 얹은 투명 오버레이 <canvas>(#drone-overlay)에서
@@ -17,6 +20,7 @@ const DRONE_PITCH_DEG = -8; // 직선뷰의 기본(정면 살짝 아래) 시선
 const DRONE_DEFAULT_SPEED_MPS = 15;
 const LINE_POINT_COUNT_MIN = 2;
 const LINE_POINT_COUNT_MAX = 5;
+const LINE_TURN_RATE_DEG_PER_S = 45; // 꺾이는 지점에서 제자리로 카메라가 도는 속도
 
 // 드론수동조정 설정
 // 화면 = 드론 카메라 시야라고 생각하고 설계한다: 방향키는 지금 보고 있는 방향 기준으로
@@ -33,6 +37,18 @@ function vec3Lerp(a, b, t) {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
 }
 
+function headingBetween(viewer, a, b) {
+  const ga = cartesianToGeodetic(viewer, a);
+  const gb = cartesianToGeodetic(viewer, b);
+  return bearingDegrees(ga.lon, ga.lat, gb.lon, gb.lat);
+}
+
+// toDeg에서 fromDeg까지의 부호 있는 최단 회전각(-180~180). 예를 들어 350도에서 10도로는
+// +20(시계 방향으로 20도)만큼만 돌면 된다(340도를 반대 방향으로 도는 게 아니라).
+function shortestAngleDeltaDeg(fromDeg, toDeg) {
+  return ((toDeg - fromDeg + 540) % 360) - 180;
+}
+
 // 입력을 기다리는 동안 오버레이가 마우스를 가로채야 하는 단계들(직선뷰 지점 클릭).
 const DRONE_INPUT_MODES = ["line-pick"];
 
@@ -41,16 +57,20 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
   // idle -> choosing -> line-count -> (line-altitude -> line-pick)*N -> ready -> playing | manual
 
   let groundPoints = []; // 직선뷰 지금까지 확정한 지점들 ({lon,lat}[])
-  let flightPath = []; // 고도 적용된 Cartesian3 목록
-  let cumulative = []; // flightPath와 짝을 이루는 누적 거리(m)
   let lineScreenPoints = []; // 직선뷰 확정한 지점들의 화면 좌표(경로 선을 그려서 보여주기 위한 용도)
 
   let linePointCount = 0; // 이번 직선뷰에서 찍을 총 지점 수(2~5). 아직 안 골랐으면 0
   let linePointAltitudesM = []; // 지점별 고도(지면 위, m). 길이 = linePointCount
   let currentLinePointIndex = 0; // 지금 고도를 정하고 있거나(line-altitude)/클릭을 기다리는(line-pick) 지점의 0-based 인덱스
 
+  // 재생 순서를 "직선 이동 -> (꺾이는 지점에서) 제자리 회전 -> 직선 이동 -> ..." 단계 목록으로
+  // 미리 만들어둔다. move 단계는 {type:"move", from, to, distance, headingDeg}, turn 단계는
+  // {type:"turn", at, fromHeadingDeg, deltaDeg}(deltaDeg는 부호 있는 회전량).
+  let linePhases = [];
+  let linePhaseIndex = 0; // 지금 재생 중인 단계
+  let linePhaseProgress = 0; // 그 단계 안에서 진행한 양(move는 m, turn은 도)
+
   let speedMps = DRONE_DEFAULT_SPEED_MPS;
-  let traveled = 0;
   let lastFrameTime = null;
   let rafId = null;
 
@@ -126,60 +146,101 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     return cartesianToGeodetic(viewer, cart);
   }
 
-  function buildCumulative() {
-    cumulative = [0];
-    for (let i = 1; i < flightPath.length; i++) {
-      cumulative.push(cumulative[i - 1] + vec3Distance(flightPath[i - 1], flightPath[i]));
-    }
-    traveled = 0;
-  }
-
   function buildLineFlightPath() {
     // 지점마다 각자 다른 고도를 줄 수 있어서, 인접한 두 지점의 고도가 다르면 그 구간은
     // 상승/하강하며 이동하는 경로가 된다.
-    flightPath = groundPoints.map((p, i) => {
+    const waypoints = groundPoints.map((p, i) => {
       const groundHeight = Math.max(0, sampleGroundHeight(viewer, p.lon, p.lat));
       const altitude = linePointAltitudesM[i] != null ? linePointAltitudesM[i] : DRONE_DEFAULT_LINE_ALTITUDE_M;
       return geodeticToCartesian(viewer, p.lon, p.lat, groundHeight + altitude);
     });
-    buildCumulative();
+
+    linePhases = [];
+    for (let i = 0; i < waypoints.length - 1; i++) {
+      const headingDeg = headingBetween(viewer, waypoints[i], waypoints[i + 1]);
+      linePhases.push({
+        type: "move",
+        from: waypoints[i],
+        to: waypoints[i + 1],
+        distance: vec3Distance(waypoints[i], waypoints[i + 1]),
+        headingDeg,
+      });
+
+      const isInteriorVertex = i < waypoints.length - 2; // 마지막 지점은 꺾을 다음 구간이 없다
+      if (isInteriorVertex) {
+        const nextHeadingDeg = headingBetween(viewer, waypoints[i + 1], waypoints[i + 2]);
+        const deltaDeg = shortestAngleDeltaDeg(headingDeg, nextHeadingDeg);
+        if (Math.abs(deltaDeg) > 0.5) {
+          // 위치는 이 지점에 멈춰 있고, 카메라만 다음 구간 방향으로 천천히 회전한다.
+          linePhases.push({ type: "turn", at: waypoints[i + 1], fromHeadingDeg: headingDeg, deltaDeg });
+        }
+      }
+    }
+    linePhaseIndex = 0;
+    linePhaseProgress = 0;
   }
 
-  // 지금까지 이동한 거리(dist)에 해당하는 경로 위의 위치와, 그 구간의 진행방향(from->to)을 구한다.
-  function stateAtDistance(dist) {
-    const total = cumulative[cumulative.length - 1];
-    const clamped = Math.max(0, Math.min(total, dist));
-    let i = 1;
-    while (i < cumulative.length - 1 && cumulative[i] < clamped) i++;
-    const segStart = cumulative[i - 1];
-    const segEnd = cumulative[i];
-    const t = segEnd > segStart ? (clamped - segStart) / (segEnd - segStart) : 0;
-    return {
-      position: vec3Lerp(flightPath[i - 1], flightPath[i], t),
-      from: flightPath[i - 1],
-      to: flightPath[i],
-      atEnd: clamped >= total,
-    };
-  }
+  // 지금 단계(linePhaseIndex/linePhaseProgress)에 맞는 카메라 위치/방향을 그대로 반영한다.
+  function applyLinePhaseView() {
+    if (linePhaseIndex >= linePhases.length) {
+      const last = linePhases[linePhases.length - 1];
+      const position = last.type === "move" ? last.to : last.at;
+      const headingDeg = last.type === "move" ? last.headingDeg : last.fromHeadingDeg + last.deltaDeg;
+      viewer.camera.setView({
+        destination: position,
+        orientation: { heading: toRad(headingDeg), pitch: toRad(DRONE_PITCH_DEG), roll: 0 },
+      });
+      return;
+    }
 
-  function tick(now) {
-    if (mode !== "playing") return;
-    if (lastFrameTime == null) lastFrameTime = now;
-    const dt = (now - lastFrameTime) / 1000;
-    lastFrameTime = now;
-    traveled += speedMps * dt;
-
-    const { position, from, to, atEnd } = stateAtDistance(traveled);
-    const fromGeo = cartesianToGeodetic(viewer, from);
-    const toGeo = cartesianToGeodetic(viewer, to);
-    const headingDeg = bearingDegrees(fromGeo.lon, fromGeo.lat, toGeo.lon, toGeo.lat);
+    const phase = linePhases[linePhaseIndex];
+    let position, headingDeg;
+    if (phase.type === "move") {
+      const t = phase.distance > 0 ? linePhaseProgress / phase.distance : 1;
+      position = vec3Lerp(phase.from, phase.to, t);
+      headingDeg = phase.headingDeg;
+    } else {
+      position = phase.at;
+      const sign = phase.deltaDeg >= 0 ? 1 : -1;
+      headingDeg = phase.fromHeadingDeg + sign * linePhaseProgress;
+    }
 
     viewer.camera.setView({
       destination: position,
       orientation: { heading: toRad(headingDeg), pitch: toRad(DRONE_PITCH_DEG), roll: 0 },
     });
+  }
 
-    if (atEnd) {
+  function tick(now) {
+    if (mode !== "playing") return;
+    if (lastFrameTime == null) lastFrameTime = now;
+    let remaining = (now - lastFrameTime) / 1000;
+    lastFrameTime = now;
+
+    // 한 프레임의 dt가 여러 단계(구간 이동 + 회전 + 다음 구간 이동...)에 걸치는 경우까지
+    // 놓치지 않고 다 소비하도록 반복한다(하나의 진행 방향 = 거리/속도 또는 각도/회전속도로
+    // 시간을 나눠 쓰고, 단계가 끝나면 다음 단계로 넘어가면서 남은 시간을 이어서 쓴다).
+    while (remaining > 0 && linePhaseIndex < linePhases.length) {
+      const phase = linePhases[linePhaseIndex];
+      const rate = phase.type === "move" ? speedMps : LINE_TURN_RATE_DEG_PER_S;
+      const total = phase.type === "move" ? phase.distance : Math.abs(phase.deltaDeg);
+      const left = Math.max(0, total - linePhaseProgress);
+      const amount = Math.min(left, rate * remaining);
+
+      linePhaseProgress += amount;
+      remaining -= rate > 0 ? amount / rate : remaining;
+
+      if (linePhaseProgress >= total - 1e-6) {
+        linePhaseIndex++;
+        linePhaseProgress = 0;
+      } else {
+        break; // 이번 프레임에 다 못 쓴 나머지는 다음 프레임에 이어서(단계 중간에서 멈춤)
+      }
+    }
+
+    applyLinePhaseView();
+
+    if (linePhaseIndex >= linePhases.length) {
       lastFrameTime = null;
       setMode("ready");
       if (callbacks.onFinished) callbacks.onFinished();
@@ -371,9 +432,9 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
       stopManualLoop();
       resetManualKeys();
       resetDrawingState();
-      flightPath = [];
-      cumulative = [];
-      traveled = 0;
+      linePhases = [];
+      linePhaseIndex = 0;
+      linePhaseProgress = 0;
       resizeOverlay();
       setMode("choosing");
     },
@@ -417,9 +478,11 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
 
     play() {
       if (mode !== "ready" && mode !== "playing") return;
-      if (flightPath.length < 2) return;
-      if (mode === "ready" && traveled >= cumulative[cumulative.length - 1]) {
-        traveled = 0; // 끝까지 다 봤으면 처음부터 다시 재생
+      if (linePhases.length === 0) return;
+      if (mode === "ready" && linePhaseIndex >= linePhases.length) {
+        // 끝까지 다 봤으면 처음부터 다시 재생
+        linePhaseIndex = 0;
+        linePhaseProgress = 0;
       }
       // 설정 단계에 그려둔 경로선(직선)은 카메라가 움직이기 시작하면 화면과 안 맞으니 지운다.
       clearOverlayCanvas();
@@ -471,9 +534,9 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
       stopManualLoop();
       resetManualKeys();
       resetDrawingState();
-      flightPath = [];
-      cumulative = [];
-      traveled = 0;
+      linePhases = [];
+      linePhaseIndex = 0;
+      linePhaseProgress = 0;
       setMode("idle");
     },
 
