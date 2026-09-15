@@ -86,13 +86,14 @@ async function saveBlobAsFile(blob, suggestedName) {
     const ext = suggestedName.split(".").pop();
     // accept의 키는 파라미터 없는 순수 MIME 타입이어야 한다(예: "video/mp4;codecs=avc1"처럼
     // 코덱 파라미터가 붙은 값을 넘기면 File System Access API가 거부하고 저장이 실패한다).
-    const baseMimeType = ext === "mp4" ? "video/mp4" : "video/webm";
+    // blob.type에서 파라미터만 떼어내 쓰면 영상이든 이미지든 다 이 함수 하나로 저장할 수 있다.
+    const baseMimeType = (blob.type || "").split(";")[0] || (ext === "mp4" ? "video/mp4" : "video/webm");
     try {
       const handle = await window.showSaveFilePicker({
         suggestedName,
         types: [
           {
-            description: ext.toUpperCase() + " 비디오",
+            description: ext.toUpperCase() + " 파일",
             accept: { [baseMimeType]: ["." + ext] },
           },
         ],

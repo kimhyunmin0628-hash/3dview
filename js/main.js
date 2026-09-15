@@ -92,6 +92,7 @@ async function bootstrap() {
     setupDpadDrag();
     setupDroneView();
     setupScreenRecorder();
+    setupScreenCapture();
 
     document.getElementById("btn-back").onclick = () => {
       const target = savedOverviewState;
@@ -500,6 +501,54 @@ function setupScreenRecorder() {
     if (!wantsSave) return;
 
     const filename = `drone-view-${Date.now()}.${ext}`;
+    try {
+      await saveBlobAsFile(blob, filename);
+      showToast("저장했습니다.");
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        console.error(err);
+        showToast("저장 중 오류가 발생했습니다.", true);
+      }
+    }
+  };
+}
+
+// 지금 화면(3D 지도 캔버스)을 한 장 캡처해서 png로 저장한다. WebGL 캔버스는 렌더링 직후
+// 화면에 표시되고 나면 버퍼가 비워질 수 있어서, canvas.toBlob()을 아무 때나 부르면 빈 이미지가
+// 나올 수 있다. 그래서 postRender(막 그린 직후) 시점에 맞춰 그 안에서 바로 캡처한다.
+function captureCanvasScreenshot() {
+  return new Promise((resolve, reject) => {
+    const canvas = viewer.scene.canvas;
+    const onPostRender = () => {
+      viewer.scene.postRender.removeEventListener(onPostRender);
+      canvas.toBlob((blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error("캡처에 실패했습니다."));
+      }, "image/png");
+    };
+    viewer.scene.postRender.addEventListener(onPostRender);
+  });
+}
+
+function setupScreenCapture() {
+  const btn = document.getElementById("btn-screenshot");
+
+  btn.onclick = async () => {
+    btn.disabled = true;
+    let blob;
+    try {
+      blob = await captureCanvasScreenshot();
+    } catch (err) {
+      console.error(err);
+      showToast("캡처 중 오류가 발생했습니다.", true);
+      btn.disabled = false;
+      return;
+    }
+    btn.disabled = false;
+
+    if (!window.confirm("지금 화면을 캡처했습니다. 이미지 파일로 저장하시겠습니까?")) return;
+
+    const filename = `drone-view-${Date.now()}.png`;
     try {
       await saveBlobAsFile(blob, filename);
       showToast("저장했습니다.");

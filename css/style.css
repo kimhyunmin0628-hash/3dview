@@ -31,7 +31,7 @@ html, body {
 #sidebar {
   top: 16px;
   left: 16px;
-  width: 260px;
+  width: 300px;
   max-height: calc(100% - 32px);
   padding: 16px;
   overflow-y: auto;
@@ -49,6 +49,7 @@ html, body {
   font-size: 15px;
   margin: 0;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .search-form {
