@@ -161,20 +161,31 @@ function setupSearchForm() {
 function setupOrbitSliders() {
   const HEADING_RATE_DEG_PER_S = 50; // 전체보기: 기존 3deg/60ms 스텝과 같은 체감 속도
   const PITCH_RATE_DEG_PER_S = 33.3;
-  const VIEWPOINT_SPEED_FACTOR = 0.7; // 조망 모드는 기존 대비 30% 느리게
+  // 조망 모드는 전체보기 대비 24.5%(0.35의 70%) 속도로 움직인다.
+  const VIEWPOINT_SPEED_FACTOR = 0.245;
   const VIEWPOINT_HEADING_RATE_DEG_PER_S = HEADING_RATE_DEG_PER_S * VIEWPOINT_SPEED_FACTOR;
   const VIEWPOINT_PITCH_RATE_DEG_PER_S = PITCH_RATE_DEG_PER_S * VIEWPOINT_SPEED_FACTOR;
+  const VIEWPOINT_RAMP_TIME_S = 0.25; // 조망 모드에서 목표 속도까지 부드럽게 가속/감속하는 데 걸리는 시간
 
   const held = { left: false, right: false, up: false, down: false };
   let lastFrameTime = null;
   let tickRegistered = false;
+
+  // 조망 모드 전용 가감속 상태. headingRamp/pitchRamp는 0(정지)~1(목표 속도)를 오가며,
+  // 버튼을 막 떼도 즉시 멈추지 않고 관성이 있는 것처럼 부드럽게 줄어든다. lastHeadingDir/
+  // lastPitchDir은 감속하는 동안(양쪽 다 안 눌린 상태) 어느 방향으로 계속 줄지 기억해둔다.
+  let headingRamp = 0;
+  let pitchRamp = 0;
+  let lastHeadingDir = 1;
+  let lastPitchDir = 1;
 
   function anyHeld() {
     return held.left || held.right || held.up || held.down;
   }
 
   function tick() {
-    if (!anyHeld()) {
+    const decelerating = headingRamp > 0.001 || pitchRamp > 0.001;
+    if (!anyHeld() && !decelerating) {
       lastFrameTime = null;
       return;
     }
@@ -187,18 +198,38 @@ function setupOrbitSliders() {
     lastFrameTime = now;
     if (dt <= 0 || dt > 1) return;
 
-    const headingRate = orbit.invertHeading ? VIEWPOINT_HEADING_RATE_DEG_PER_S : HEADING_RATE_DEG_PER_S;
-    const pitchRate = orbit.invertHeading ? VIEWPOINT_PITCH_RATE_DEG_PER_S : PITCH_RATE_DEG_PER_S;
+    const isViewpoint = orbit.invertHeading;
+    const headingRate = isViewpoint ? VIEWPOINT_HEADING_RATE_DEG_PER_S : HEADING_RATE_DEG_PER_S;
+    const pitchRate = isViewpoint ? VIEWPOINT_PITCH_RATE_DEG_PER_S : PITCH_RATE_DEG_PER_S;
     // 조망 모드(orbit.invertHeading===true)에서는 전체보기와 좌/우 버튼의 회전 방향이 반대가 되게 한다.
-    const sign = orbit.invertHeading ? -1 : 1;
+    const sign = isViewpoint ? -1 : 1;
 
-    if (held.left || held.right) {
-      const dir = held.left ? 1 : -1;
-      orbit.setHeadingDegrees(orbit.currentHeadingDegrees() + sign * dir * headingRate * dt);
+    if (held.left) lastHeadingDir = 1;
+    else if (held.right) lastHeadingDir = -1;
+    if (held.up) lastPitchDir = 1;
+    else if (held.down) lastPitchDir = -1;
+
+    const headingTarget = held.left || held.right ? 1 : 0;
+    const pitchTarget = held.up || held.down ? 1 : 0;
+
+    if (isViewpoint) {
+      // 목표값을 향해 매 프레임 일정 비율만큼만 다가가서(지수 감쇠) 자연스러운 가감속을 만든다.
+      const step = Math.min(1, dt / VIEWPOINT_RAMP_TIME_S);
+      headingRamp += (headingTarget - headingRamp) * step;
+      pitchRamp += (pitchTarget - pitchRamp) * step;
+      if (headingRamp < 0.001) headingRamp = 0;
+      if (pitchRamp < 0.001) pitchRamp = 0;
+    } else {
+      // 전체보기는 기존과 동일하게 누르면 바로 목표 속도, 떼면 바로 정지.
+      headingRamp = headingTarget;
+      pitchRamp = pitchTarget;
     }
-    if (held.up || held.down) {
-      const dir = held.up ? 1 : -1;
-      orbit.setElevationDegrees(orbit.currentElevationDegrees() + dir * pitchRate * dt);
+
+    if (headingRamp > 0) {
+      orbit.setHeadingDegrees(orbit.currentHeadingDegrees() + sign * lastHeadingDir * headingRate * headingRamp * dt);
+    }
+    if (pitchRamp > 0) {
+      orbit.setElevationDegrees(orbit.currentElevationDegrees() + lastPitchDir * pitchRate * pitchRamp * dt);
     }
   }
 
