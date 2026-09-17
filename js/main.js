@@ -10,6 +10,10 @@ let savedOverviewState = null;
 // 강제로 다시 맞춰준다 (아래 bootstrap의 postRender 리스너).
 let viewpointModeActive = false;
 
+// 화면 녹화 중인지. 드론뷰 여부와 별개로 지명 라벨을 숨겨야 하는 또 다른 조건이라
+// setPoiLabelsVisible을 부를 때 둘 다 감안해야 한다(둘 중 하나라도 켜져 있으면 숨김).
+let isRecordingActive = false;
+
 function flyToLocation(lon, lat, { height = 600, pitchDeg = -40 } = {}) {
   const { cartesian } = cartesianOnGround(viewer, lon, lat, height);
   viewer.camera.flyTo({
@@ -375,7 +379,7 @@ function setupDroneView() {
       panel.classList.toggle("visible", mode !== "idle");
       panel.classList.toggle("manual-mode", mode === "manual");
       if (mode === "idle") panel.classList.remove("collapsed"); // 다음에 열 때는 항상 펼쳐진 상태로 시작
-      setPoiLabelsVisible(mode === "idle"); // 드론뷰 동안에는 지명/POI 글자를 없애서 촬영 화면을 깔끔하게 유지
+      setPoiLabelsVisible(mode === "idle" && !isRecordingActive); // 드론뷰 동안에는 지명/POI 글자를 없애서 촬영 화면을 깔끔하게 유지
       overlay.classList.toggle("active", drone.isWaitingForInput());
       document.getElementById("orbit-panel").style.display = mode === "idle" ? "flex" : "none";
 
@@ -497,6 +501,8 @@ function setupScreenRecorder() {
     if (!recorder.isRecording()) {
       try {
         recorder.start();
+        isRecordingActive = true;
+        setPoiLabelsVisible(false); // 녹화 중에는 지명/POI 글자가 영상에 안 남게 숨긴다
         btn.classList.add("recording");
         glyph.textContent = "⏹";
         tooltip.textContent = "녹화 중지";
@@ -516,8 +522,12 @@ function setupScreenRecorder() {
       console.error(err);
       showToast("녹화를 마치지 못했습니다.", true);
       btn.disabled = false;
+      isRecordingActive = false;
+      setPoiLabelsVisible(drone.getMode() === "idle");
       return;
     }
+    isRecordingActive = false;
+    setPoiLabelsVisible(drone.getMode() === "idle"); // 드론뷰 중이 아니라면 라벨을 다시 보여준다
     btn.classList.remove("recording");
     glyph.textContent = "⏺";
     tooltip.textContent = "화면 녹화";
