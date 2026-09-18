@@ -562,7 +562,13 @@ function captureCanvasScreenshot() {
     const canvas = viewer.scene.canvas;
     const onPostRender = () => {
       viewer.scene.postRender.removeEventListener(onPostRender);
-      canvas.toBlob((blob) => {
+      // 녹화와 마찬가지로 유튜브 표준 화면비(16:9)에 맞춰 중앙 기준으로 잘라서 저장한다.
+      const crop = computeAspectCrop(canvas.width, canvas.height, CAPTURE_ASPECT_RATIO);
+      const cropped = document.createElement("canvas");
+      cropped.width = crop.sw;
+      cropped.height = crop.sh;
+      cropped.getContext("2d").drawImage(canvas, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, crop.sw, crop.sh);
+      cropped.toBlob((blob) => {
         if (blob) resolve(blob);
         else reject(new Error("캡처에 실패했습니다."));
       }, "image/png");
