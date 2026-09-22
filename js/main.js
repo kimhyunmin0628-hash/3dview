@@ -346,7 +346,7 @@ const DRONE_STATUS_TEXT = {
   "line-count": "몇 개 지점을 지나는 경로로 촬영할까요?",
   ready: "경로가 준비됐습니다. 재생을 눌러보세요",
   playing: "드론이 경로를 비행 중입니다",
-  manual: "방향키로 이동, Shift+방향키로 시야 전환, W/S로 상승/하강하세요",
+  manual: "방향키로 이동, WSAD로 시야 전환, R/F로 상승/하강하세요",
 };
 
 function setupDroneView() {

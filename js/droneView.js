@@ -24,11 +24,12 @@ const LINE_TURN_RATE_DEG_PER_S = 45; // 꺾이는 지점에서 제자리로 카�
 
 // 드론수동조정 설정
 // 화면 = 드론 카메라 시야라고 생각하고 설계한다: 방향키는 지금 보고 있는 방향 기준으로
-// 전진/후진/좌우 이동(스트레이프)하고, Shift+방향키로 그 "보고 있는 방향" 자체를 돌린다.
-// W/S(상승/하강)와 완전히 같은 방식(누르는 동안 그 속도, 떼면 즉시 0)으로 통일해서
-// 방향키만 뻣뻣하게 느껴지던 문제를 없앤다.
+// 전진/후진/좌우 이동(스트레이프)하고, W/S/A/D로 그 "보고 있는 방향" 자체(상하/좌우)를 돌리고,
+// R/F로 상승/하강한다. 세 그룹이 전부 서로 다른 물리 키라서 실제 드론 조종기처럼 동시에
+// 눌러도(예: 전진+좌회전+상승) 그대로 같이 반영된다. 모두 같은 방식(누르는 동안 그 속도,
+// 떼면 즉시 0)으로 통일해서 어느 키만 뻣뻣하게 느껴지는 문제를 없앤다.
 const MANUAL_DEFAULT_SPEED_MPS = 12; // 전진/후진/좌우이동/상승/하강 공통 속도
-const MANUAL_LOOK_RATE_DEG_PER_S = 29.4; // Shift+방향키로 시야를 돌리는 속도 (기존 70의 60% -> 다시 70%)
+const MANUAL_LOOK_RATE_DEG_PER_S = 9.8; // W/S/A/D로 시야를 돌리는 속도 (기존 29.4의 1/3)
 const MANUAL_PITCH_MIN_DEG = -85;
 const MANUAL_PITCH_MAX_DEG = 60;
 const MANUAL_MIN_HEIGHT_M = 1;
@@ -312,7 +313,7 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     manualLastFrameTime = now;
     if (dt <= 0 || dt > 1) return; // 탭이 백그라운드에 있다가 돌아온 경우 등 비정상적으로 큰 dt는 무시
 
-    // Shift+방향키: 화면(시야) 방향 자체를 돌린다. 즉시 반응(누르는 동안 그 속도).
+    // W/S/A/D: 화면(시야) 방향 자체를 돌린다. 즉시 반응(누르는 동안 그 속도).
     if (manualKeys.lookLeft) manualHeadingDeg -= MANUAL_LOOK_RATE_DEG_PER_S * dt;
     if (manualKeys.lookRight) manualHeadingDeg += MANUAL_LOOK_RATE_DEG_PER_S * dt;
     manualHeadingDeg = ((manualHeadingDeg % 360) + 360) % 360;
@@ -320,7 +321,7 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     if (manualKeys.lookDown) manualPitchDeg = Math.max(MANUAL_PITCH_MIN_DEG, manualPitchDeg - MANUAL_LOOK_RATE_DEG_PER_S * dt);
 
     // 방향키: 지금 화면이 보고 있는 방향(manualHeadingDeg) 기준으로 전진/후진/좌우이동.
-    // W/S(상승/하강)와 완전히 같은 방식 — 누르는 동안 그 속도로, 떼면 즉시 0.
+    // R/F(상승/하강)와 완전히 같은 방식 — 누르는 동안 그 속도로, 떼면 즉시 0.
     const forwardDir = (manualKeys.forward ? 1 : 0) - (manualKeys.backward ? 1 : 0);
     const strafeDir = (manualKeys.strafeRight ? 1 : 0) - (manualKeys.strafeLeft ? 1 : 0);
     const vertDir = (manualKeys.up ? 1 : 0) - (manualKeys.down ? 1 : 0);
@@ -345,30 +346,40 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     });
   }
 
+  // 방향키(이동)와 화면 전환/상승하강이 서로 다른 물리 키라서, 실제 드론 조종기처럼
+  // 다 같이 눌러도(예: 전진하면서 동시에 좌회전+상승) 그대로 동시에 반영된다.
   function handleManualKeyDown(e) {
     if (mode !== "manual") return;
     let handled = true;
     switch (e.code) {
       case "ArrowUp":
-        if (e.shiftKey) manualKeys.lookUp = true;
-        else manualKeys.forward = true;
+        manualKeys.forward = true;
         break;
       case "ArrowDown":
-        if (e.shiftKey) manualKeys.lookDown = true;
-        else manualKeys.backward = true;
+        manualKeys.backward = true;
         break;
       case "ArrowLeft":
-        if (e.shiftKey) manualKeys.lookLeft = true;
-        else manualKeys.strafeLeft = true;
+        manualKeys.strafeLeft = true;
         break;
       case "ArrowRight":
-        if (e.shiftKey) manualKeys.lookRight = true;
-        else manualKeys.strafeRight = true;
+        manualKeys.strafeRight = true;
         break;
       case "KeyW":
-        manualKeys.up = true;
+        manualKeys.lookUp = true;
         break;
       case "KeyS":
+        manualKeys.lookDown = true;
+        break;
+      case "KeyA":
+        manualKeys.lookLeft = true;
+        break;
+      case "KeyD":
+        manualKeys.lookRight = true;
+        break;
+      case "KeyR":
+        manualKeys.up = true;
+        break;
+      case "KeyF":
         manualKeys.down = true;
         break;
       case "Space":
@@ -392,25 +403,33 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     let handled = true;
     switch (e.code) {
       case "ArrowUp":
-        manualKeys.lookUp = false;
         manualKeys.forward = false;
         break;
       case "ArrowDown":
-        manualKeys.lookDown = false;
         manualKeys.backward = false;
         break;
       case "ArrowLeft":
-        manualKeys.lookLeft = false;
         manualKeys.strafeLeft = false;
         break;
       case "ArrowRight":
-        manualKeys.lookRight = false;
         manualKeys.strafeRight = false;
         break;
       case "KeyW":
-        manualKeys.up = false;
+        manualKeys.lookUp = false;
         break;
       case "KeyS":
+        manualKeys.lookDown = false;
+        break;
+      case "KeyA":
+        manualKeys.lookLeft = false;
+        break;
+      case "KeyD":
+        manualKeys.lookRight = false;
+        break;
+      case "KeyR":
+        manualKeys.up = false;
+        break;
+      case "KeyF":
         manualKeys.down = false;
         break;
       default:
