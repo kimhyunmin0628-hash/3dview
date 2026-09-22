@@ -130,6 +130,19 @@
 
   <div id="status-toast" class="panel"></div>
 
+  <!-- 녹화를 마친 뒤 저장 여부를 물어보는 창. window.confirm은 사용자가 여기서 클릭하고 나서도
+       "방금 클릭했다"는 상태가 유지되지 않는 경우가 있어서(특히 촬영이 오래 걸린 뒤라면),
+       실제 저장 대화상자(showSaveFilePicker)가 조용히 안 뜨고 다운로드 폴더로 바로 저장되는
+       원인이 됐다. 그래서 직접 만든 버튼으로 바꿔서, "저장" 클릭 핸들러 안에서 곧바로
+       showSaveFilePicker를 부르게 한다(그래야 매번 확실히 대화상자가 뜬다). -->
+  <div id="save-prompt" class="panel">
+    <div id="save-prompt-message"></div>
+    <div class="actions">
+      <button id="btn-save-confirm" class="action-btn" type="button">저장</button>
+      <button id="btn-save-cancel" class="action-btn secondary" type="button">저장 안 함</button>
+    </div>
+  </div>
+
   <!-- 순서 중요: config -> terrain -> vworldBootstrap -> buildingPicker -> viewpoint -> orbitControl -> droneView -> screenRecorder -> search -> main -->
   <script src="js/config.js"></script>
   <script src="js/terrain.js"></script>

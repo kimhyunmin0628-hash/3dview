@@ -547,28 +547,80 @@ function setupDroneView() {
 }
 
 // 녹화가 끝난 뒤 공통으로 하는 일: 저장할지 물어보고, 원하면 파일로 저장한다.
-async function finishRecordingSaveFlow(result) {
-  const { blob, ext } = result;
-  const wantsSave = window.confirm(
-    ext === "mp4"
-      ? "촬영을 마쳤습니다. mp4 파일로 저장하시겠습니까?"
-      : "촬영을 마쳤습니다. 이 브라우저는 mp4 직접 녹화를 지원하지 않아 webm으로 저장됩니다. 저장하시겠습니까?"
-  );
-  if (!wantsSave) return;
+// window.confirm은 사용자가 "예"를 누른 시점의 클릭이 이 함수를 호출한 원래 클릭(녹화 시작
+// 버튼 등)과 이미 멀어져 있어서, 그 직후 showSaveFilePicker를 불러도 브라우저가 "방금 사용자가
+// 누른 것"으로 인정하지 않아 조용히 다운로드 폴더로 대체돼버리는 경우가 있었다(그래서 "어떨
+// 땐 저장 위치를 물어보고 어떨 땐 그냥 다운로드된다"는 문제가 생겼다). 그래서 직접 만든
+// 저장/취소 버튼을 쓰고, "저장" 버튼의 클릭 핸들러 안에서 곧바로 saveBlobAsFile(=
+// showSaveFilePicker)를 불러서 항상 그 클릭을 기준으로 인정받게 한다.
+function finishRecordingSaveFlow(result) {
+  return new Promise((resolve) => {
+    const { blob, ext } = result;
+    const panel = document.getElementById("save-prompt");
+    const messageEl = document.getElementById("save-prompt-message");
+    const btnSave = document.getElementById("btn-save-confirm");
+    const btnCancel = document.getElementById("btn-save-cancel");
 
-  const filename = `drone-view-${Date.now()}.${ext}`;
-  try {
-    await saveBlobAsFile(blob, filename);
-    showToast("저장했습니다.");
-  } catch (err) {
-    if (err.name !== "AbortError") {
-      console.error(err);
-      showToast("저장 중 오류가 발생했습니다.", true);
+    messageEl.textContent =
+      ext === "mp4"
+        ? "촬영을 마쳤습니다. mp4 파일로 저장하시겠습니까?"
+        : "촬영을 마쳤습니다. 이 브라우저는 mp4 직접 녹화를 지원하지 않아 webm으로 저장됩니다. 저장하시겠습니까?";
+    panel.classList.add("visible");
+
+    function cleanup() {
+      panel.classList.remove("visible");
+      btnSave.onclick = null;
+      btnCancel.onclick = null;
     }
-  }
+
+    btnSave.onclick = async () => {
+      cleanup();
+      const filename = `drone-view-${Date.now()}.${ext}`;
+      try {
+        await saveBlobAsFile(blob, filename); // 폴더를 이전에 저장했던 곳으로 기본 지정해주는 것도 브라우저가 원본 사이트별로 기억해서 알아서 해준다.
+        showToast("저장했습니다.");
+      } catch (err) {
+        if (err.name !== "AbortError") {
+          console.error(err);
+          showToast("저장 중 오류가 발생했습니다.", true);
+        }
+      }
+      resolve();
+    };
+
+    btnCancel.onclick = () => {
+      cleanup();
+      resolve();
+    };
+  });
 }
 
 const LOCKED_RECORDING_FIXED_DT_S = 1 / 30; // 항상 이 간격만큼만 전진시켜서, 실제 렌더링 속도와 무관하게 매끄러운 결과를 만든다.
+const RECORDING_FRAME_INTERVAL_MS = 1000 / 30; // 캡처하는 실제 간격도 30fps에 맞춰야 재생 속도가 맞다(아래 설명).
+
+// 다음으로 "실제로 다 그려진(postRender)" 시점에 딱 맞춰 한 프레임을 캡처한다. 두 가지를
+// 한 번에 해결한다:
+// 1) WebGL 캔버스는 그려지고 나면 버퍼가 금방 비워질 수 있어서, requestAnimationFrame이나
+//    setTimeout으로 "적당히 그려졌겠지" 하고 나중에 긁어오면 화면이 안 보이거나(빈 프레임)
+//    한 번씩만 제대로 보이는 문제가 있었다. postRender 콜백 "안에서" 바로 캡처해야
+//    버퍼가 아직 살아있는 시점을 잡을 수 있다.
+// 2) postRender는 보통 화면 주사율(예: 60Hz)만큼 자주 일어나는데, 그때마다 다 캡처하면
+//    "한 걸음 = 1/30초"로 진행시킨 내용이 실제로는 그보다 훨씬 자주(예: 60fps로) 찍혀서,
+//    30fps로 재생하면 실제보다 빠르게 재생되는 문제가 있었다. 그래서 마지막 캡처로부터
+//    30fps 간격(약 33.3ms)이 지난 postRender만 골라서 캡처한다.
+function waitForPacedRender(recorder, lastCaptureTimeState) {
+  return new Promise((resolve) => {
+    function onPostRender() {
+      const now = performance.now();
+      if (now - lastCaptureTimeState.t < RECORDING_FRAME_INTERVAL_MS) return; // 아직 30fps 간격이 안 됨, 다음 postRender까지 계속 기다린다
+      viewer.scene.postRender.removeEventListener(onPostRender);
+      recorder.captureFrame(); // 방금 그려진 그 프레임을, 버퍼가 살아있는 지금 바로 긁어온다
+      lastCaptureTimeState.t = now;
+      resolve();
+    }
+    viewer.scene.postRender.addEventListener(onPostRender);
+  });
+}
 
 // 드론 직선뷰가 "재생 준비됨" 상태일 때만 쓸 수 있는 고정 프레임 녹화. 재생을 실제 시간이
 // 아니라 고정된 간격으로 우리가 직접 한 걸음씩 몰아서 진행시키고, 매 걸음마다 그 순간의
@@ -585,13 +637,13 @@ async function runLockedLineFlightRecording(recorder, shouldCancel) {
     throw err;
   }
 
+  const lastCaptureTimeState = { t: performance.now() };
   let finished = false;
   while (!finished) {
     if (drone.getMode() !== "playing") break; // 녹화 도중 드론뷰가 종료되는 등 외부 요인으로 중단
     if (shouldCancel()) break; // 녹화 버튼을 다시 눌러 직접 멈춘 경우
     finished = drone.stepLockedLineFlight(LOCKED_RECORDING_FIXED_DT_S);
-    await new Promise((resolve) => requestAnimationFrame(resolve)); // 이번 위치를 실제로 한 번 그릴 시간을 준다
-    recorder.captureFrame();
+    await waitForPacedRender(recorder, lastCaptureTimeState);
   }
 
   drone.endLockedLineFlight();
@@ -626,6 +678,7 @@ async function runReplayCapture(recorder, recordedInput, stepFn, shouldCancel) {
   };
   let eventIndex = 0;
   let simTime = 0;
+  const lastCaptureTimeState = { t: performance.now() };
 
   while (simTime < totalDuration) {
     if (shouldCancel()) break;
@@ -635,8 +688,7 @@ async function runReplayCapture(recorder, recordedInput, stepFn, shouldCancel) {
     }
     stepFn(LOCKED_RECORDING_FIXED_DT_S, replayKeys);
     simTime += LOCKED_RECORDING_FIXED_DT_S;
-    await new Promise((resolve) => requestAnimationFrame(resolve)); // 이번 자세를 실제로 한 번 그릴 시간을 준다
-    recorder.captureFrame();
+    await waitForPacedRender(recorder, lastCaptureTimeState);
   }
 
   return recorder.stop();

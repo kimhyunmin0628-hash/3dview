@@ -78,7 +78,7 @@ function createScreenRecorder(canvas) {
   let captureCanvas = null;
   let captureCtx = null;
   let cropRect = null;
-  let drawLoopId = null;
+  let removeDrawLoop = null; // 실시간 녹화용 postRender 리스너 해제 함수
   let lockedTrack = null; // 고정 프레임 모드에서만 쓰는, 수동으로 프레임을 밀어넣는 비디오 트랙
 
   function setupCaptureCanvas() {
@@ -105,9 +105,12 @@ function createScreenRecorder(canvas) {
     );
   }
 
-  function drawCroppedFrameLoop() {
-    drawCroppedFrameOnce();
-    drawLoopId = requestAnimationFrame(drawCroppedFrameLoop);
+  // requestAnimationFrame이나 setTimeout으로 "적당한 시점"에 그리면, WebGL 캔버스는 그려지고
+  // 나면 버퍼가 금방 비워질 수 있어서 화면이 안 보이거나 한 번씩만 제대로 보이는 프레임이 생길
+  // 수 있다. viewer.scene.postRender는 실제로 그 프레임이 다 그려진 직후에 불리므로, 그 콜백
+  // "안에서" 바로 긁어와야 매 프레임 안전하게 캡처된다.
+  function startDrawLoop() {
+    removeDrawLoop = viewer.scene.postRender.addEventListener(drawCroppedFrameOnce);
   }
 
   function beginMediaRecorder(stream) {
@@ -122,9 +125,9 @@ function createScreenRecorder(canvas) {
   }
 
   function cleanupCaptureCanvas() {
-    if (drawLoopId) {
-      cancelAnimationFrame(drawLoopId);
-      drawLoopId = null;
+    if (removeDrawLoop) {
+      removeDrawLoop();
+      removeDrawLoop = null;
     }
     lockedTrack = null;
     captureCanvas = null;
@@ -153,7 +156,7 @@ function createScreenRecorder(canvas) {
     // 실시간(화면에 보이는 대로) 녹화 — 매 프레임 자동으로 캡처한다.
     start() {
       setupCaptureCanvas();
-      drawCroppedFrameLoop();
+      startDrawLoop();
       beginMediaRecorder(captureCanvas.captureStream(30));
     },
 
