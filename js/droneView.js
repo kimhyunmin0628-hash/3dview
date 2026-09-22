@@ -95,6 +95,7 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
   };
   let manualLastFrameTime = null;
   let removeManualPostRender = null;
+  let manualInputRecordingStartPose = null; // 입력 녹화를 시작한 시점의 위치/시야(재생 시작점)
 
   function setMode(next) {
     mode = next;
@@ -212,15 +213,15 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     });
   }
 
-  function tick(now) {
-    if (mode !== "playing") return;
-    if (lastFrameTime == null) lastFrameTime = now;
-    let remaining = (now - lastFrameTime) / 1000;
-    lastFrameTime = now;
+  // 지금 있는 단계(들)를 정확히 dtSeconds만큼만 진행시킨다. 실제 시간(performance.now())과
+  // 무관하게 "얼마나 진행할지"를 바깥에서 그대로 정해줄 수 있어서, 일반 재생(tick, 아래)뿐
+  // 아니라 고정 프레임 녹화(main.js)에서도 그대로 재사용한다. 끝까지 다 갔으면 true를 반환.
+  function advanceLinePhases(dtSeconds) {
+    let remaining = dtSeconds;
 
-    // 한 프레임의 dt가 여러 단계(구간 이동 + 회전 + 다음 구간 이동...)에 걸치는 경우까지
-    // 놓치지 않고 다 소비하도록 반복한다(하나의 진행 방향 = 거리/속도 또는 각도/회전속도로
-    // 시간을 나눠 쓰고, 단계가 끝나면 다음 단계로 넘어가면서 남은 시간을 이어서 쓴다).
+    // 한 번의 dt가 여러 단계(구간 이동 + 회전 + 다음 구간 이동...)에 걸치는 경우까지 놓치지
+    // 않고 다 소비하도록 반복한다(하나의 진행 방향 = 거리/속도 또는 각도/회전속도로 시간을
+    // 나눠 쓰고, 단계가 끝나면 다음 단계로 넘어가면서 남은 시간을 이어서 쓴다).
     while (remaining > 0 && linePhaseIndex < linePhases.length) {
       const phase = linePhases[linePhaseIndex];
       const rate = phase.type === "move" ? speedMps : LINE_TURN_RATE_DEG_PER_S;
@@ -235,13 +236,22 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
         linePhaseIndex++;
         linePhaseProgress = 0;
       } else {
-        break; // 이번 프레임에 다 못 쓴 나머지는 다음 프레임에 이어서(단계 중간에서 멈춤)
+        break; // 이번 dt에 다 못 쓴 나머지는 다음 호출에서 이어서(단계 중간에서 멈춤)
       }
     }
 
     applyLinePhaseView();
+    return linePhaseIndex >= linePhases.length;
+  }
 
-    if (linePhaseIndex >= linePhases.length) {
+  function tick(now) {
+    if (mode !== "playing") return;
+    if (lastFrameTime == null) lastFrameTime = now;
+    const dt = (now - lastFrameTime) / 1000;
+    lastFrameTime = now;
+
+    const finished = advanceLinePhases(dt);
+    if (finished) {
       lastFrameTime = null;
       setMode("ready");
       if (callbacks.onFinished) callbacks.onFinished();
@@ -302,29 +312,32 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     Object.keys(manualKeys).forEach((k) => (manualKeys[k] = false));
   }
 
-  function manualTick() {
-    if (mode !== "manual") return;
-    const now = performance.now();
-    if (manualLastFrameTime == null) {
-      manualLastFrameTime = now;
-      return;
-    }
-    const dt = (now - manualLastFrameTime) / 1000;
-    manualLastFrameTime = now;
-    if (dt <= 0 || dt > 1) return; // 탭이 백그라운드에 있다가 돌아온 경우 등 비정상적으로 큰 dt는 무시
+  // 입력을 기록해뒀다가(고정 프레임 녹화용) 나중에 그대로 재생할 수 있게 해주는 기록기.
+  const manualInputRecorder = createInputTimelineRecorder();
 
+  // manualKeys의 한 항목을 바꾸면서, 입력 기록 중이면 그 변화도 타임라인에 남긴다. 실제로
+  // 값이 바뀔 때만 기록해야 한다(키보드 auto-repeat으로 오는 중복 keydown은 무시).
+  function setManualKey(name, pressed) {
+    if (manualKeys[name] === pressed) return;
+    manualKeys[name] = pressed;
+    manualInputRecorder.logChange(name, pressed);
+  }
+
+  // dt(초) 동안 keys 상태를 기준으로 위치/시야를 전진시키고 카메라에 반영한다. 실시간 조작
+  // (manualTick, 실제 dt)과 재생(고정 프레임 녹화, 고정 dt) 양쪽에서 그대로 재사용한다.
+  function advanceManual(dt, keys) {
     // W/S/A/D: 화면(시야) 방향 자체를 돌린다. 즉시 반응(누르는 동안 그 속도).
-    if (manualKeys.lookLeft) manualHeadingDeg -= MANUAL_LOOK_RATE_DEG_PER_S * dt;
-    if (manualKeys.lookRight) manualHeadingDeg += MANUAL_LOOK_RATE_DEG_PER_S * dt;
+    if (keys.lookLeft) manualHeadingDeg -= MANUAL_LOOK_RATE_DEG_PER_S * dt;
+    if (keys.lookRight) manualHeadingDeg += MANUAL_LOOK_RATE_DEG_PER_S * dt;
     manualHeadingDeg = ((manualHeadingDeg % 360) + 360) % 360;
-    if (manualKeys.lookUp) manualPitchDeg = Math.min(MANUAL_PITCH_MAX_DEG, manualPitchDeg + MANUAL_LOOK_RATE_DEG_PER_S * dt);
-    if (manualKeys.lookDown) manualPitchDeg = Math.max(MANUAL_PITCH_MIN_DEG, manualPitchDeg - MANUAL_LOOK_RATE_DEG_PER_S * dt);
+    if (keys.lookUp) manualPitchDeg = Math.min(MANUAL_PITCH_MAX_DEG, manualPitchDeg + MANUAL_LOOK_RATE_DEG_PER_S * dt);
+    if (keys.lookDown) manualPitchDeg = Math.max(MANUAL_PITCH_MIN_DEG, manualPitchDeg - MANUAL_LOOK_RATE_DEG_PER_S * dt);
 
     // 방향키: 지금 화면이 보고 있는 방향(manualHeadingDeg) 기준으로 전진/후진/좌우이동.
     // R/F(상승/하강)와 완전히 같은 방식 — 누르는 동안 그 속도로, 떼면 즉시 0.
-    const forwardDir = (manualKeys.forward ? 1 : 0) - (manualKeys.backward ? 1 : 0);
-    const strafeDir = (manualKeys.strafeRight ? 1 : 0) - (manualKeys.strafeLeft ? 1 : 0);
-    const vertDir = (manualKeys.up ? 1 : 0) - (manualKeys.down ? 1 : 0);
+    const forwardDir = (keys.forward ? 1 : 0) - (keys.backward ? 1 : 0);
+    const strafeDir = (keys.strafeRight ? 1 : 0) - (keys.strafeLeft ? 1 : 0);
+    const vertDir = (keys.up ? 1 : 0) - (keys.down ? 1 : 0);
 
     if (forwardDir !== 0 || strafeDir !== 0 || vertDir !== 0) {
       const headingRad = toRad(manualHeadingDeg);
@@ -346,6 +359,19 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     });
   }
 
+  function manualTick() {
+    if (mode !== "manual") return;
+    const now = performance.now();
+    if (manualLastFrameTime == null) {
+      manualLastFrameTime = now;
+      return;
+    }
+    const dt = (now - manualLastFrameTime) / 1000;
+    manualLastFrameTime = now;
+    if (dt <= 0 || dt > 1) return; // 탭이 백그라운드에 있다가 돌아온 경우 등 비정상적으로 큰 dt는 무시
+    advanceManual(dt, manualKeys);
+  }
+
   // 방향키(이동)와 화면 전환/상승하강이 서로 다른 물리 키라서, 실제 드론 조종기처럼
   // 다 같이 눌러도(예: 전진하면서 동시에 좌회전+상승) 그대로 동시에 반영된다.
   function handleManualKeyDown(e) {
@@ -353,37 +379,38 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     let handled = true;
     switch (e.code) {
       case "ArrowUp":
-        manualKeys.forward = true;
+        setManualKey("forward", true);
         break;
       case "ArrowDown":
-        manualKeys.backward = true;
+        setManualKey("backward", true);
         break;
       case "ArrowLeft":
-        manualKeys.strafeLeft = true;
+        setManualKey("strafeLeft", true);
         break;
       case "ArrowRight":
-        manualKeys.strafeRight = true;
+        setManualKey("strafeRight", true);
         break;
       case "KeyW":
-        manualKeys.lookUp = true;
+        setManualKey("lookUp", true);
         break;
       case "KeyS":
-        manualKeys.lookDown = true;
+        setManualKey("lookDown", true);
         break;
       case "KeyA":
-        manualKeys.lookLeft = true;
+        setManualKey("lookLeft", true);
         break;
       case "KeyD":
-        manualKeys.lookRight = true;
+        setManualKey("lookRight", true);
         break;
       case "KeyR":
-        manualKeys.up = true;
+        setManualKey("up", true);
         break;
       case "KeyF":
-        manualKeys.down = true;
+        setManualKey("down", true);
         break;
       case "Space":
-        resetManualKeys(); // 정지: 눌려있던 모든 이동 키를 초기화해서 즉시 제자리에 호버링한다.
+        // 정지: 눌려있던 모든 이동 키를 초기화해서 즉시 제자리에 호버링한다.
+        Object.keys(manualKeys).forEach((k) => setManualKey(k, false));
         break;
       default:
         handled = false;
@@ -403,34 +430,34 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
     let handled = true;
     switch (e.code) {
       case "ArrowUp":
-        manualKeys.forward = false;
+        setManualKey("forward", false);
         break;
       case "ArrowDown":
-        manualKeys.backward = false;
+        setManualKey("backward", false);
         break;
       case "ArrowLeft":
-        manualKeys.strafeLeft = false;
+        setManualKey("strafeLeft", false);
         break;
       case "ArrowRight":
-        manualKeys.strafeRight = false;
+        setManualKey("strafeRight", false);
         break;
       case "KeyW":
-        manualKeys.lookUp = false;
+        setManualKey("lookUp", false);
         break;
       case "KeyS":
-        manualKeys.lookDown = false;
+        setManualKey("lookDown", false);
         break;
       case "KeyA":
-        manualKeys.lookLeft = false;
+        setManualKey("lookLeft", false);
         break;
       case "KeyD":
-        manualKeys.lookRight = false;
+        setManualKey("lookRight", false);
         break;
       case "KeyR":
-        manualKeys.up = false;
+        setManualKey("up", false);
         break;
       case "KeyF":
-        manualKeys.down = false;
+        setManualKey("down", false);
         break;
       default:
         handled = false;
@@ -517,6 +544,31 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
       setMode("ready");
     },
 
+    // ---- 고정 프레임 녹화(main.js)용: 일반 재생(rAF+실제 시간)과 별도로, 바깥에서
+    // 정확히 원하는 dt만큼씩만 진행시키며 한 프레임씩 직접 몰아서 구동할 때 쓴다. 렌더링이
+    // 버벅여도(3D 타일 로딩 등) 매 걸음의 이동량은 항상 일정해서, 녹화 결과가 끊기지 않는다.
+    beginLockedLineFlight() {
+      if (mode !== "ready" || linePhases.length === 0) return false;
+      linePhaseIndex = 0;
+      linePhaseProgress = 0;
+      clearOverlayCanvas();
+      cancelAnimationFrame(rafId);
+      lastFrameTime = null;
+      setMode("playing");
+      return true;
+    },
+
+    // 정확히 dtSeconds만큼 진행시킨다. 끝까지 다 갔으면 true.
+    stepLockedLineFlight(dtSeconds) {
+      return advanceLinePhases(dtSeconds);
+    },
+
+    // 고정 프레임 녹화를 끝맺으며 재생이 정상적으로 끝난 것과 같은 상태로 정리한다.
+    endLockedLineFlight() {
+      setMode("ready");
+      if (callbacks.onFinished) callbacks.onFinished();
+    },
+
     setSpeed(mps) {
       speedMps = Math.max(1, mps);
     },
@@ -552,11 +604,60 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
       return manualPitchDeg;
     },
 
+    // ---- 드론수동조정 입력 녹화 + 고정 프레임 재생(main.js에서 구동) ----
+    // 실시간 조작은 그대로 두고(화면은 실시간으로 그대로 움직임), 키 입력 변화만 타임라인으로
+    // 남긴다. 녹화를 멈춘 뒤 그 타임라인을 고정 프레임으로 재생하면서 캡처하면, 렌더링이
+    // 버벅였던 구간도 항상 일정한 속도로 재현된 매끄러운 영상이 된다.
+    isManualInputRecording() {
+      return manualInputRecorder.isRecording();
+    },
+
+    beginManualInputRecording() {
+      if (mode !== "manual") return false;
+      manualInputRecordingStartPose = {
+        position: { x: manualPosition.x, y: manualPosition.y, z: manualPosition.z },
+        headingDeg: manualHeadingDeg,
+        pitchDeg: manualPitchDeg,
+      };
+      manualInputRecorder.start();
+      return true;
+    },
+
+    // 입력 기록을 멈추고 { events, durationSec, startPose }를 돌려준다.
+    endManualInputRecording() {
+      const { events, durationSec } = manualInputRecorder.stop();
+      return { events, durationSec, startPose: manualInputRecordingStartPose };
+    },
+
+    // 재생 준비: 기록된 시작 자세로 되돌리고, 실시간 조작 루프는 잠깐 멈춘다(재생 중 사용자
+    // 입력이 섞이지 않게). 재생은 main.js가 stepManualReplay를 고정 dt로 반복 호출해 구동한다.
+    beginManualReplay(startPose) {
+      stopManualLoop();
+      manualPosition = { x: startPose.position.x, y: startPose.position.y, z: startPose.position.z };
+      manualHeadingDeg = startPose.headingDeg;
+      manualPitchDeg = startPose.pitchDeg;
+      resetManualKeys();
+    },
+
+    stepManualReplay(dtSeconds, keys) {
+      advanceManual(dtSeconds, keys);
+    },
+
+    // 재생이 끝난 뒤 다시 실시간 조작으로 복귀한다(재생이 끝난 지점부터 이어서 조작 가능).
+    endManualReplay() {
+      resetManualKeys();
+      manualLastFrameTime = null;
+      if (mode === "manual" && !removeManualPostRender) {
+        removeManualPostRender = viewer.scene.postRender.addEventListener(manualTick);
+      }
+    },
+
     exit() {
       cancelAnimationFrame(rafId);
       lastFrameTime = null;
       stopManualLoop();
       resetManualKeys();
+      if (manualInputRecorder.isRecording()) manualInputRecorder.stop();
       resetDrawingState();
       linePhases = [];
       linePhaseIndex = 0;

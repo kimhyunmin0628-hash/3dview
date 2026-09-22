@@ -14,6 +14,9 @@ let viewpointModeActive = false;
 // setPoiLabelsVisible을 부를 때 둘 다 감안해야 한다(둘 중 하나라도 켜져 있으면 숨김).
 let isRecordingActive = false;
 
+// setupOrbitSliders()가 채워주는, 조망뷰 방향패드 입력 기록/재생 API(고정 프레임 녹화용).
+let viewpointRecordingApi = null;
+
 function flyToLocation(lon, lat, { height = 600, pitchDeg = -40 } = {}) {
   const { cartesian } = cartesianOnGround(viewer, lon, lat, height);
   viewer.camera.flyTo({
@@ -198,34 +201,22 @@ function setupOrbitSliders() {
     return held.left || held.right || held.up || held.down;
   }
 
-  function tick() {
-    const decelerating = headingRamp > 0.001 || pitchRamp > 0.001;
-    if (!anyHeld() && !decelerating) {
-      lastFrameTime = null;
-      return;
-    }
-    const now = performance.now();
-    if (lastFrameTime == null) {
-      lastFrameTime = now;
-      return;
-    }
-    const dt = (now - lastFrameTime) / 1000;
-    lastFrameTime = now;
-    if (dt <= 0 || dt > 1) return;
-
+  // dt(초) 동안 heldState 기준으로 헤딩/피치를 전진시킨다. 실시간 조작(tick, 실제 dt)과
+  // 조망뷰 재생(고정 프레임 녹화, 고정 dt) 양쪽에서 그대로 재사용한다.
+  function advanceOrbitStep(dt, heldState) {
     const isViewpoint = orbit.invertHeading;
     const headingRate = isViewpoint ? VIEWPOINT_HEADING_RATE_DEG_PER_S : HEADING_RATE_DEG_PER_S;
     const pitchRate = isViewpoint ? VIEWPOINT_PITCH_RATE_DEG_PER_S : PITCH_RATE_DEG_PER_S;
     // 조망 모드(orbit.invertHeading===true)에서는 전체보기와 좌/우 버튼의 회전 방향이 반대가 되게 한다.
     const sign = isViewpoint ? -1 : 1;
 
-    if (held.left) lastHeadingDir = 1;
-    else if (held.right) lastHeadingDir = -1;
-    if (held.up) lastPitchDir = 1;
-    else if (held.down) lastPitchDir = -1;
+    if (heldState.left) lastHeadingDir = 1;
+    else if (heldState.right) lastHeadingDir = -1;
+    if (heldState.up) lastPitchDir = 1;
+    else if (heldState.down) lastPitchDir = -1;
 
-    const headingTarget = held.left || held.right ? 1 : 0;
-    const pitchTarget = held.up || held.down ? 1 : 0;
+    const headingTarget = heldState.left || heldState.right ? 1 : 0;
+    const pitchTarget = heldState.up || heldState.down ? 1 : 0;
 
     if (isViewpoint) {
       // 목표값을 향해 매 프레임 일정 비율만큼만 다가가서(지수 감쇠) 자연스러운 가감속을 만든다.
@@ -248,10 +239,34 @@ function setupOrbitSliders() {
     }
   }
 
+  function tick() {
+    const decelerating = headingRamp > 0.001 || pitchRamp > 0.001;
+    if (!anyHeld() && !decelerating) {
+      lastFrameTime = null;
+      return;
+    }
+    const now = performance.now();
+    if (lastFrameTime == null) {
+      lastFrameTime = now;
+      return;
+    }
+    const dt = (now - lastFrameTime) / 1000;
+    lastFrameTime = now;
+    if (dt <= 0 || dt > 1) return;
+    advanceOrbitStep(dt, held);
+  }
+
+  // 조망뷰 방향패드 입력을 기록했다가(고정 프레임 녹화용) 나중에 그대로 재생할 수 있게 한다.
+  const viewpointInputRecorder = createInputTimelineRecorder();
+  let viewpointInputRecordingStartState = null;
+
   function startHeld(key) {
     if (drone.isActive()) return; // 드론뷰 중엔 방향 패드로 궤도를 돌리지 않는다
     if (!orbit.begin()) return;
-    held[key] = true;
+    if (!held[key]) {
+      held[key] = true;
+      viewpointInputRecorder.logChange(key, true);
+    }
     if (!tickRegistered) {
       tickRegistered = true;
       viewer.scene.postRender.addEventListener(tick);
@@ -259,12 +274,49 @@ function setupOrbitSliders() {
   }
 
   function stopHeld(key) {
-    held[key] = false;
+    if (held[key]) {
+      held[key] = false;
+      viewpointInputRecorder.logChange(key, false);
+    }
   }
 
   function stopAllHeld() {
-    held.left = held.right = held.up = held.down = false;
+    Object.keys(held).forEach((k) => stopHeld(k));
   }
+
+  // main.js의 녹화 버튼 로직(setupScreenRecorder)이 이 API로 조망뷰 입력 기록/재생을 구동한다.
+  viewpointRecordingApi = {
+    isViewpointActive() {
+      return orbit.invertHeading === true;
+    },
+    begin() {
+      if (!orbit.invertHeading) return false;
+      viewpointInputRecordingStartState = {
+        headingDeg: orbit.currentHeadingDegrees(),
+        pitchDeg: orbit.currentElevationDegrees(),
+      };
+      viewpointInputRecorder.start();
+      return true;
+    },
+    end() {
+      const { events, durationSec } = viewpointInputRecorder.stop();
+      return { events, durationSec, startState: viewpointInputRecordingStartState };
+    },
+    beginReplay(startState) {
+      stopAllHeld();
+      orbit.setHeadingDegrees(startState.headingDeg);
+      orbit.setElevationDegrees(startState.pitchDeg);
+      headingRamp = 0;
+      pitchRamp = 0;
+    },
+    stepReplay(dtSeconds, heldState) {
+      advanceOrbitStep(dtSeconds, heldState);
+    },
+    endReplay() {
+      headingRamp = 0;
+      pitchRamp = 0;
+    },
+  };
 
   function bindDpadButton(id, key) {
     const el = document.getElementById(id);
@@ -494,8 +546,128 @@ function setupDroneView() {
   window.addEventListener("resize", () => drone.resizeOverlay());
 }
 
-// 화면(3D 지도) 녹화: 사이드바 상단의 녹화 아이콘을 누르면 시작, 다시 누르면 중지하고
-// 저장 여부를 물어본 뒤 mp4(또는 브라우저가 지원 안 하면 webm)로 저장한다.
+// 녹화가 끝난 뒤 공통으로 하는 일: 저장할지 물어보고, 원하면 파일로 저장한다.
+async function finishRecordingSaveFlow(result) {
+  const { blob, ext } = result;
+  const wantsSave = window.confirm(
+    ext === "mp4"
+      ? "촬영을 마쳤습니다. mp4 파일로 저장하시겠습니까?"
+      : "촬영을 마쳤습니다. 이 브라우저는 mp4 직접 녹화를 지원하지 않아 webm으로 저장됩니다. 저장하시겠습니까?"
+  );
+  if (!wantsSave) return;
+
+  const filename = `drone-view-${Date.now()}.${ext}`;
+  try {
+    await saveBlobAsFile(blob, filename);
+    showToast("저장했습니다.");
+  } catch (err) {
+    if (err.name !== "AbortError") {
+      console.error(err);
+      showToast("저장 중 오류가 발생했습니다.", true);
+    }
+  }
+}
+
+const LOCKED_RECORDING_FIXED_DT_S = 1 / 30; // 항상 이 간격만큼만 전진시켜서, 실제 렌더링 속도와 무관하게 매끄러운 결과를 만든다.
+
+// 드론 직선뷰가 "재생 준비됨" 상태일 때만 쓸 수 있는 고정 프레임 녹화. 재생을 실제 시간이
+// 아니라 고정된 간격으로 우리가 직접 한 걸음씩 몰아서 진행시키고, 매 걸음마다 그 순간의
+// 화면을 프레임으로 찍어 넣는다. 3D 타일 로딩 등으로 렌더링이 느려지는 구간이 있어도 진행
+// 속도 자체는 항상 일정해서, 실시간 녹화와 달리 결과 영상이 끊겨 보이지 않는다. 대신 로딩이
+// 느리면 녹화가 끝나는 데 걸리는 실제 시간은 영상 길이보다 더 걸릴 수 있다.
+async function runLockedLineFlightRecording(recorder, shouldCancel) {
+  if (!drone.beginLockedLineFlight()) return null;
+
+  try {
+    recorder.startLocked();
+  } catch (err) {
+    drone.endLockedLineFlight();
+    throw err;
+  }
+
+  let finished = false;
+  while (!finished) {
+    if (drone.getMode() !== "playing") break; // 녹화 도중 드론뷰가 종료되는 등 외부 요인으로 중단
+    if (shouldCancel()) break; // 녹화 버튼을 다시 눌러 직접 멈춘 경우
+    finished = drone.stepLockedLineFlight(LOCKED_RECORDING_FIXED_DT_S);
+    await new Promise((resolve) => requestAnimationFrame(resolve)); // 이번 위치를 실제로 한 번 그릴 시간을 준다
+    recorder.captureFrame();
+  }
+
+  drone.endLockedLineFlight();
+  return recorder.stop();
+}
+
+// 드론수동조정/조망뷰처럼 "미리 정해진 경로가 없는" 조작은, 사용자가 실시간으로 한 번 조작하는
+// 동안 입력 변화만 타임라인으로 기록해뒀다가(각 stepFn 소유자의 begin~end 구간), 그 타임라인을
+// 고정 프레임으로 그대로 재생하면서 캡처한다. recordedInput은 { events, durationSec, ... } 형태.
+async function runReplayCapture(recorder, recordedInput, stepFn, shouldCancel) {
+  try {
+    recorder.startLocked();
+  } catch (err) {
+    throw err;
+  }
+
+  const events = recordedInput.events;
+  const totalDuration = recordedInput.durationSec;
+  const replayKeys = {
+    forward: false,
+    backward: false,
+    strafeLeft: false,
+    strafeRight: false,
+    lookUp: false,
+    lookDown: false,
+    lookLeft: false,
+    lookRight: false,
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+  };
+  let eventIndex = 0;
+  let simTime = 0;
+
+  while (simTime < totalDuration) {
+    if (shouldCancel()) break;
+    while (eventIndex < events.length && events[eventIndex].tSec <= simTime) {
+      replayKeys[events[eventIndex].key] = events[eventIndex].pressed;
+      eventIndex++;
+    }
+    stepFn(LOCKED_RECORDING_FIXED_DT_S, replayKeys);
+    simTime += LOCKED_RECORDING_FIXED_DT_S;
+    await new Promise((resolve) => requestAnimationFrame(resolve)); // 이번 자세를 실제로 한 번 그릴 시간을 준다
+    recorder.captureFrame();
+  }
+
+  return recorder.stop();
+}
+
+async function runManualReplayRecording(recorder, recordedInput, shouldCancel) {
+  drone.beginManualReplay(recordedInput.startPose);
+  try {
+    return await runReplayCapture(recorder, recordedInput, (dt, keys) => drone.stepManualReplay(dt, keys), shouldCancel);
+  } finally {
+    drone.endManualReplay();
+  }
+}
+
+async function runViewpointReplayRecording(recorder, recordedInput, shouldCancel) {
+  viewpointRecordingApi.beginReplay(recordedInput.startState);
+  try {
+    return await runReplayCapture(recorder, recordedInput, (dt, keys) => viewpointRecordingApi.stepReplay(dt, keys), shouldCancel);
+  } finally {
+    viewpointRecordingApi.endReplay();
+  }
+}
+
+// 화면(3D 지도) 녹화: 사이드바 상단의 녹화 아이콘을 누르면 시작, 다시 누르면 중지하고 저장
+// 여부를 물어본 뒤 mp4(또는 브라우저가 지원 안 하면 webm)로 저장한다. 상황에 따라 네 가지
+// 방식 중 하나로 동작한다(고정 프레임 녹화를 지원하는 브라우저에 한해):
+// - 드론 직선뷰 "재생 준비됨": 경로를 고정 프레임으로 직접 재생하며 녹화(runLockedLineFlightRecording)
+// - 드론수동조정 중: 조작 입력을 기록 -> 다시 누르면 그 조작을 고정 프레임으로 재생하며 녹화
+// - 조망뷰 중: 방향패드 입력을 기록 -> 다시 누르면 그 조작을 고정 프레임으로 재생하며 녹화
+// - 그 외(일반 화면 등): 기존처럼 화면을 실시간 그대로 녹화
+// 두 "입력 기록" 방식은 재생/녹화 단계에서 다시 누르면 그때까지 찍은 만큼만 저장하고 멈춘다.
 function setupScreenRecorder() {
   const btn = document.getElementById("btn-record");
   const glyph = btn.querySelector(".icon-btn-glyph");
@@ -508,59 +680,140 @@ function setupScreenRecorder() {
     return;
   }
 
+  function markRecordingUi(recording, tooltipText) {
+    btn.classList.toggle("recording", recording);
+    glyph.textContent = recording ? "⏹" : "⏺";
+    tooltip.textContent = tooltipText;
+  }
+
+  // idle | locked-line | manual-input | manual-replay | viewpoint-input | viewpoint-replay | realtime
+  let phase = "idle";
+  let cancelRequested = false;
+
+  async function finishPhase(result) {
+    isRecordingActive = false;
+    setPoiLabelsVisible(drone.getMode() === "idle");
+    markRecordingUi(false, "화면 녹화");
+    phase = "idle";
+    if (result) await finishRecordingSaveFlow(result);
+  }
+
   btn.onclick = async () => {
-    if (!recorder.isRecording()) {
+    // ---- 입력을 기록하던 중이면: 다시 누른 건 "이제 그 조작을 영상으로 만들어라"는 뜻 ----
+    if (phase === "manual-input") {
+      const recorded = drone.endManualInputRecording();
+      phase = "manual-replay";
+      cancelRequested = false;
+      markRecordingUi(true, "재생 영상 만드는 중...");
+      showToast("방금 조작을 고정 프레임으로 다시 재생하며 녹화합니다.");
+      let result = null;
       try {
-        recorder.start();
-        isRecordingActive = true;
-        setPoiLabelsVisible(false); // 녹화 중에는 지명/POI 글자가 영상에 안 남게 숨긴다
-        btn.classList.add("recording");
-        glyph.textContent = "⏹";
-        tooltip.textContent = "녹화 중지";
-        showToast("화면 녹화를 시작합니다.");
+        result = await runManualReplayRecording(recorder, recorded, () => cancelRequested);
+      } catch (err) {
+        console.error(err);
+        showToast(err.message || "녹화 영상을 만들지 못했습니다.", true);
+      }
+      await finishPhase(result);
+      return;
+    }
+
+    if (phase === "viewpoint-input") {
+      const recorded = viewpointRecordingApi.end();
+      phase = "viewpoint-replay";
+      cancelRequested = false;
+      markRecordingUi(true, "재생 영상 만드는 중...");
+      showToast("방금 조작을 고정 프레임으로 다시 재생하며 녹화합니다.");
+      let result = null;
+      try {
+        result = await runViewpointReplayRecording(recorder, recorded, () => cancelRequested);
+      } catch (err) {
+        console.error(err);
+        showToast(err.message || "녹화 영상을 만들지 못했습니다.", true);
+      }
+      await finishPhase(result);
+      return;
+    }
+
+    // ---- 고정 프레임 재생/녹화가 이미 진행 중이면: 다시 누른 건 "지금까지만 저장해라" ----
+    if (phase === "locked-line" || phase === "manual-replay" || phase === "viewpoint-replay") {
+      cancelRequested = true; // 다음 걸음에서 루프가 멈춘다
+      return;
+    }
+
+    // ---- 실시간 녹화 중이면: 다시 누른 건 정지 ----
+    if (phase === "realtime") {
+      btn.disabled = true;
+      let result;
+      try {
+        result = await recorder.stop();
+      } catch (err) {
+        console.error(err);
+        showToast("녹화를 마치지 못했습니다.", true);
+        btn.disabled = false;
+        isRecordingActive = false;
+        setPoiLabelsVisible(drone.getMode() === "idle");
+        phase = "idle";
+        return;
+      }
+      btn.disabled = false;
+      await finishPhase(result);
+      return;
+    }
+
+    // ---- 아무것도 진행 중이 아니면: 지금 화면 상황에 맞는 녹화를 새로 시작 ----
+    if (drone.getMode() === "ready" && recorder.isLockedFrameSupported()) {
+      phase = "locked-line";
+      cancelRequested = false;
+      isRecordingActive = true;
+      setPoiLabelsVisible(false);
+      markRecordingUi(true, "고정 프레임 녹화 중 (다시 누르면 중지)");
+      showToast("직선뷰를 고정 프레임으로 녹화합니다. 로딩 상황에 따라 시간이 걸릴 수 있어요.");
+      let result = null;
+      try {
+        result = await runLockedLineFlightRecording(recorder, () => cancelRequested);
       } catch (err) {
         console.error(err);
         showToast(err.message || "녹화를 시작하지 못했습니다.", true);
       }
+      await finishPhase(result);
       return;
     }
 
-    btn.disabled = true;
-    let result;
+    if (drone.getMode() === "manual" && recorder.isLockedFrameSupported() && drone.beginManualInputRecording()) {
+      phase = "manual-input";
+      isRecordingActive = true;
+      setPoiLabelsVisible(false);
+      markRecordingUi(true, "조작 기록 중 (다시 누르면 녹화 영상 생성)");
+      showToast("지금부터 조작을 기록합니다. 다시 누르면 방금 조작을 매끄러운 영상으로 만들어요.");
+      return;
+    }
+
+    if (
+      viewpointRecordingApi &&
+      viewpointRecordingApi.isViewpointActive() &&
+      !drone.isActive() &&
+      recorder.isLockedFrameSupported() &&
+      viewpointRecordingApi.begin()
+    ) {
+      phase = "viewpoint-input";
+      isRecordingActive = true;
+      setPoiLabelsVisible(false);
+      markRecordingUi(true, "조작 기록 중 (다시 누르면 녹화 영상 생성)");
+      showToast("지금부터 조작을 기록합니다. 다시 누르면 방금 조작을 매끄러운 영상으로 만들어요.");
+      return;
+    }
+
+    // ---- 그 외(일반 화면 등): 기존처럼 실시간 녹화 ----
     try {
-      result = await recorder.stop();
+      recorder.start();
+      phase = "realtime";
+      isRecordingActive = true;
+      setPoiLabelsVisible(false); // 녹화 중에는 지명/POI 글자가 영상에 안 남게 숨긴다
+      markRecordingUi(true, "녹화 중지");
+      showToast("화면 녹화를 시작합니다.");
     } catch (err) {
       console.error(err);
-      showToast("녹화를 마치지 못했습니다.", true);
-      btn.disabled = false;
-      isRecordingActive = false;
-      setPoiLabelsVisible(drone.getMode() === "idle");
-      return;
-    }
-    isRecordingActive = false;
-    setPoiLabelsVisible(drone.getMode() === "idle"); // 드론뷰 중이 아니라면 라벨을 다시 보여준다
-    btn.classList.remove("recording");
-    glyph.textContent = "⏺";
-    tooltip.textContent = "화면 녹화";
-    btn.disabled = false;
-
-    const { blob, ext } = result;
-    const wantsSave = window.confirm(
-      ext === "mp4"
-        ? "촬영을 마쳤습니다. mp4 파일로 저장하시겠습니까?"
-        : "촬영을 마쳤습니다. 이 브라우저는 mp4 직접 녹화를 지원하지 않아 webm으로 저장됩니다. 저장하시겠습니까?"
-    );
-    if (!wantsSave) return;
-
-    const filename = `drone-view-${Date.now()}.${ext}`;
-    try {
-      await saveBlobAsFile(blob, filename);
-      showToast("저장했습니다.");
-    } catch (err) {
-      if (err.name !== "AbortError") {
-        console.error(err);
-        showToast("저장 중 오류가 발생했습니다.", true);
-      }
+      showToast(err.message || "녹화를 시작하지 못했습니다.", true);
     }
   };
 }

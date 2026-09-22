@@ -21,6 +21,36 @@ function computeAspectCrop(sourceWidth, sourceHeight, targetRatio) {
   return { sx: Math.floor((sourceWidth - sw) / 2), sy: Math.floor((sourceHeight - sh) / 2), sw, sh };
 }
 
+// 실시간 조작(드론수동조정 키보드, 조망뷰 방향패드) 중 눌림 상태가 바뀌는 순간들을
+// 타임라인으로 기록해뒀다가, 나중에 고정 프레임(실제 시간과 무관하게 정해진 간격)으로 그대로
+// 재현하기 위한 범용 기록기. 조작 자체는 실시간으로 그대로 보여주고, 녹화 대상 영상만 따로
+// "그 조작을 그대로 다시 재생"해서 고정 프레임 방식으로 매끄럽게 만드는 데 쓴다.
+function createInputTimelineRecorder() {
+  let recording = false;
+  let startTime = 0;
+  let events = [];
+
+  return {
+    isRecording() {
+      return recording;
+    },
+    start() {
+      recording = true;
+      startTime = performance.now();
+      events = [];
+    },
+    // key 상태가 실제로 바뀔 때만(키 리핏 등 중복 아님) 호출해야 한다.
+    logChange(key, pressed) {
+      if (!recording) return;
+      events.push({ tSec: (performance.now() - startTime) / 1000, key, pressed });
+    },
+    stop() {
+      recording = false;
+      return { events, durationSec: (performance.now() - startTime) / 1000 };
+    },
+  };
+}
+
 const RECORDING_MIME_CANDIDATES = [
   "video/mp4;codecs=avc1",
   "video/mp4",
@@ -49,10 +79,19 @@ function createScreenRecorder(canvas) {
   let captureCtx = null;
   let cropRect = null;
   let drawLoopId = null;
+  let lockedTrack = null; // 고정 프레임 모드에서만 쓰는, 수동으로 프레임을 밀어넣는 비디오 트랙
 
-  // 원본 캔버스에서 16:9 영역만 매 프레임 오려서 녹화용 캔버스에 그려 넣는다. MediaRecorder는
-  // 원본이 아니라 이 캔버스의 captureStream()을 받으므로, 저장되는 영상은 항상 16:9가 된다.
-  function drawCroppedFrame() {
+  function setupCaptureCanvas() {
+    cropRect = computeAspectCrop(canvas.width, canvas.height, CAPTURE_ASPECT_RATIO);
+    captureCanvas = document.createElement("canvas");
+    captureCanvas.width = cropRect.sw;
+    captureCanvas.height = cropRect.sh;
+    captureCtx = captureCanvas.getContext("2d");
+  }
+
+  // 원본 캔버스에서 16:9 영역만 오려서 녹화용 캔버스에 그려 넣는다. MediaRecorder는 원본이
+  // 아니라 이 캔버스의 스트림을 받으므로, 저장되는 영상은 항상 16:9가 된다.
+  function drawCroppedFrameOnce() {
     captureCtx.drawImage(
       canvas,
       cropRect.sx,
@@ -64,7 +103,32 @@ function createScreenRecorder(canvas) {
       captureCanvas.width,
       captureCanvas.height
     );
-    drawLoopId = requestAnimationFrame(drawCroppedFrame);
+  }
+
+  function drawCroppedFrameLoop() {
+    drawCroppedFrameOnce();
+    drawLoopId = requestAnimationFrame(drawCroppedFrameLoop);
+  }
+
+  function beginMediaRecorder(stream) {
+    mimeType = pickSupportedRecordingMimeType();
+    if (!mimeType) throw new Error("이 브라우저는 화면 녹화를 지원하지 않습니다.");
+    chunks = [];
+    mediaRecorder = new MediaRecorder(stream, { mimeType });
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunks.push(e.data);
+    };
+    mediaRecorder.start(1000); // 1초 단위로 데이터를 모아서, 너무 늦게까지 안 모이는 걸 방지
+  }
+
+  function cleanupCaptureCanvas() {
+    if (drawLoopId) {
+      cancelAnimationFrame(drawLoopId);
+      drawLoopId = null;
+    }
+    lockedTrack = null;
+    captureCanvas = null;
+    captureCtx = null;
   }
 
   return {
@@ -72,28 +136,43 @@ function createScreenRecorder(canvas) {
       return !!pickSupportedRecordingMimeType() && typeof canvas.captureStream === "function";
     },
 
+    isLockedFrameSupported() {
+      // captureStream(0)이 만드는 트랙은 CanvasCaptureMediaStreamTrack이고, requestFrame()은
+      // 거기에만 있다(일반 MediaStreamTrack.prototype에는 없다).
+      return (
+        this.isSupported() &&
+        typeof window.CanvasCaptureMediaStreamTrack !== "undefined" &&
+        "requestFrame" in window.CanvasCaptureMediaStreamTrack.prototype
+      );
+    },
+
     isRecording() {
       return !!mediaRecorder && mediaRecorder.state === "recording";
     },
 
+    // 실시간(화면에 보이는 대로) 녹화 — 매 프레임 자동으로 캡처한다.
     start() {
-      mimeType = pickSupportedRecordingMimeType();
-      if (!mimeType) throw new Error("이 브라우저는 화면 녹화를 지원하지 않습니다.");
+      setupCaptureCanvas();
+      drawCroppedFrameLoop();
+      beginMediaRecorder(captureCanvas.captureStream(30));
+    },
 
-      cropRect = computeAspectCrop(canvas.width, canvas.height, CAPTURE_ASPECT_RATIO);
-      captureCanvas = document.createElement("canvas");
-      captureCanvas.width = cropRect.sw;
-      captureCanvas.height = cropRect.sh;
-      captureCtx = captureCanvas.getContext("2d");
-      drawCroppedFrame();
+    // 고정 프레임 녹화 — 프레임을 자동으로 찍지 않고, captureFrame()을 부를 때만 그 시점의
+    // 화면을 한 장 기록한다. 드론 직선뷰처럼 진행을 실제 시간과 무관하게 고정된 간격으로 직접
+    // 몰아서 구동할 수 있을 때, 렌더링이 잠깐 버벅여도(3D 타일 로딩 등) 영상에는 항상 일정한
+    // 속도로만 진행된 것처럼 저장하기 위해 쓴다.
+    startLocked() {
+      setupCaptureCanvas();
+      const stream = captureCanvas.captureStream(0); // 0 = 자동 캡처 없음, requestFrame()으로만 프레임 추가
+      lockedTrack = stream.getVideoTracks()[0];
+      beginMediaRecorder(stream);
+    },
 
-      const stream = captureCanvas.captureStream(30);
-      chunks = [];
-      mediaRecorder = new MediaRecorder(stream, { mimeType });
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunks.push(e.data);
-      };
-      mediaRecorder.start(1000); // 1초 단위로 데이터를 모아서, 너무 늦게까지 안 모이는 걸 방지
+    // startLocked() 이후, 지금 화면 상태를 프레임 한 장으로 기록한다.
+    captureFrame() {
+      if (!lockedTrack) return;
+      drawCroppedFrameOnce();
+      lockedTrack.requestFrame();
     },
 
     // 녹화를 멈추고 완성된 Blob과 실제 확장자를 돌려준다.
@@ -104,10 +183,7 @@ function createScreenRecorder(canvas) {
           return;
         }
         mediaRecorder.onstop = () => {
-          cancelAnimationFrame(drawLoopId);
-          drawLoopId = null;
-          captureCanvas = null;
-          captureCtx = null;
+          cleanupCaptureCanvas();
           const blob = new Blob(chunks, { type: mimeType });
           const ext = extensionForRecordingMimeType(mimeType);
           chunks = [];
