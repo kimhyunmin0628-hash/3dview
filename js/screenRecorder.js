@@ -6,6 +6,10 @@
 // 비율이 제각각이라, 저장할 때는 항상 중앙 기준으로 16:9에 맞는 최대 영역만 잘라 쓴다.
 const CAPTURE_ASPECT_RATIO = 16 / 9;
 
+// MediaRecorder에 비트레이트를 따로 안 정해주면 브라우저 기본값(꽤 낮음)으로 압축돼서, 건물
+// 디테일이 많은 3D 화면이 뭉개져 보인다. 1080p 고화질 기준으로 흔히 권장되는 수준으로 올려둔다.
+const RECORDING_VIDEO_BITS_PER_SECOND = 8000000; // 8Mbps
+
 // 원본 캔버스(sourceWidth x sourceHeight) 안에서 targetRatio에 맞는 가장 큰 중앙 영역의
 // 좌표를 구한다. 원본이 더 옆으로 넓으면 좌우를, 더 위아래로 길면 상하를 잘라낸다.
 function computeAspectCrop(sourceWidth, sourceHeight, targetRatio) {
@@ -117,7 +121,7 @@ function createScreenRecorder(canvas) {
     mimeType = pickSupportedRecordingMimeType();
     if (!mimeType) throw new Error("이 브라우저는 화면 녹화를 지원하지 않습니다.");
     chunks = [];
-    mediaRecorder = new MediaRecorder(stream, { mimeType });
+    mediaRecorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: RECORDING_VIDEO_BITS_PER_SECOND });
     mediaRecorder.ondataavailable = (e) => {
       if (e.data && e.data.size > 0) chunks.push(e.data);
     };
