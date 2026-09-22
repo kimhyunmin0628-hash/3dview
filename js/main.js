@@ -82,8 +82,19 @@ async function bootstrap() {
 
     orbit = createOrbitControl(viewer);
 
+    const pitchIndicator = document.getElementById("pitch-indicator");
+    const pitchIndicatorValue = document.getElementById("pitch-indicator-value");
     viewer.scene.postRender.addEventListener(() => {
       viewer.scene.screenSpaceCameraController.enableInputs = !viewpointModeActive && !drone.isActive();
+
+      // 드론수동조정 중에는 W/S로 조절하는 시야 각도(수평면 기준, 0=수평/+=위/-=아래)를
+      // 나침반 아래에 실시간으로 보여준다.
+      const isManual = drone.getMode() === "manual";
+      pitchIndicator.classList.toggle("visible", isManual);
+      if (isManual) {
+        const pitchDeg = Math.round(drone.getManualPitchDeg());
+        pitchIndicatorValue.textContent = `${pitchDeg > 0 ? "+" : ""}${pitchDeg}°`;
+      }
     });
 
     enableBuildingViewPicker(viewer, vwMap, (picked) => {

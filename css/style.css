@@ -344,6 +344,25 @@ button.action-btn:hover {
   justify-content: center;
 }
 
+/* 드론수동조정 중에만 나타난다(전체보기에서는 이 자리를 방향 패드가 쓰고, 방향 패드는
+   드론뷰 동안 숨겨지므로 자리가 겹치지 않는다). #orbit-panel과 똑같은 박스를 써서 나침반과
+   가로 중심이 자동으로 맞는다. */
+#pitch-indicator {
+  top: 155px;
+  right: 30px;
+  width: 126px;
+  padding: 8px 0;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  display: none;
+}
+
+#pitch-indicator.visible {
+  display: block;
+}
+
 .dpad {
   position: relative;
   width: 68px;

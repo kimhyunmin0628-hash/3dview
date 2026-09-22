@@ -547,6 +547,11 @@ function createDroneView(viewer, overlayCanvas, callbacks) {
       manualSpeedMps = Math.max(1, mps);
     },
 
+    // 지금 시야가 수평면 기준으로 몇 도 위/아래를 보고 있는지(0=수평, +=위, -=아래).
+    getManualPitchDeg() {
+      return manualPitchDeg;
+    },
+
     exit() {
       cancelAnimationFrame(rafId);
       lastFrameTime = null;
