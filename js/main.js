@@ -898,6 +898,9 @@ function setupScreenCapture() {
 
   btn.onclick = async () => {
     btn.disabled = true;
+    // 화면 녹화와 마찬가지로, 캡처한 이미지에는 지명/POI 글자가 안 남게 캡처 직전에 숨겼다가
+    // 끝나면 지금 상황(드론뷰 여부 등)에 맞는 원래 표시 상태로 되돌린다.
+    setPoiLabelsVisible(false);
     let blob;
     try {
       blob = await captureCanvasScreenshot();
@@ -905,8 +908,10 @@ function setupScreenCapture() {
       console.error(err);
       showToast("캡처 중 오류가 발생했습니다.", true);
       btn.disabled = false;
+      setPoiLabelsVisible(drone.getMode() === "idle" && !isRecordingActive);
       return;
     }
+    setPoiLabelsVisible(drone.getMode() === "idle" && !isRecordingActive);
     btn.disabled = false;
 
     if (!window.confirm("지금 화면을 캡처했습니다. 이미지 파일로 저장하시겠습니까?")) return;
