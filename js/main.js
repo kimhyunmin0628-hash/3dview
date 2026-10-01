@@ -101,7 +101,7 @@ async function bootstrap() {
     });
 
     enableBuildingViewPicker(viewer, vwMap, (picked) => {
-      if (drone.isActive()) return; // 드론뷰 그리기/재생 중에는 건물 클릭을 무시한다
+      if (drone.isActive()) return; // 드론뷰(드론수동조정) 중에는 건물 클릭을 무시한다
       showInfoCard(picked);
     });
 
@@ -385,10 +385,8 @@ function setupDpadDrag() {
   );
 }
 
-// 드론뷰: "드론뷰" 버튼을 누르면 직선뷰/드론수동조정 중 하나를 고른다.
-// - 직선뷰: 지날 지점 수(2~5개)를 고른 뒤, 지점마다 "고도 정하기 -> 지도에서 클릭"을
-//   반복해서 경로를 완성하면, 재생 시 그 지점들을 순서대로 지나며 진행 방향을 본다.
-// - 드론수동조정: 키보드로 직접 드론을 조종하면서 촬영한다(안내 문구는 droneView.js 참고).
+// 드론뷰: "드론뷰" 버튼을 누르면 바로 드론수동조정으로 들어간다. 키보드로 직접 드론을
+// 조종하면서 촬영한다(조작법/속도 설정은 droneView.js, index.html 참고).
 // vworld 3D는 지명/POI 라벨을 별도의 3D Tileset(url에 "/poi/" 포함, 예: POI_BASE, POI_BOUND)으로
 // 렌더링한다. 인덱스는 로드 시점에 따라 바뀔 수 있어서 매번 url로 찾아서 켜고 끈다.
 function setPoiLabelsVisible(visible) {
@@ -402,115 +400,48 @@ function setPoiLabelsVisible(visible) {
   }
 }
 
-// line-altitude/line-pick은 "N번째 지점" 같은 동적인 안내가 필요해서 여기 없이
-// setupDroneView()의 onModeChange에서 따로 문구를 만든다.
 const DRONE_STATUS_TEXT = {
-  choosing: "직선뷰 또는 드론수동조정을 선택하세요",
-  "line-count": "몇 개 지점을 지나는 경로로 촬영할까요?",
-  ready: "경로가 준비됐습니다. 재생을 눌러보세요",
-  playing: "드론이 경로를 비행 중입니다",
   manual: "방향키로 이동, WSAD로 시야 전환, R/F로 상승/하강하세요",
 };
 
 function setupDroneView() {
-  const overlay = document.getElementById("drone-overlay");
   const panel = document.getElementById("drone-panel");
   const statusEl = document.getElementById("drone-status");
-  const chooseActionsEl = document.getElementById("drone-choose-actions");
-  const lineCountOptionsEl = document.getElementById("drone-line-count-options");
-  const lineAltitudeOptionsEl = document.getElementById("drone-line-altitude-options");
   const manualOptionsEl = document.getElementById("drone-manual-options");
-  const playControlsEl = document.getElementById("drone-play-controls");
   const btnCollapse = document.getElementById("btn-drone-panel-collapse");
   const btnToggle = document.getElementById("btn-drone-view");
-  const btnLine = document.getElementById("btn-drone-line");
-  const btnManual = document.getElementById("btn-drone-manual");
-  const btnPlay = document.getElementById("btn-drone-play");
-  const btnRedraw = document.getElementById("btn-drone-redraw");
   const btnExit = document.getElementById("btn-drone-exit");
-  const speedInput = document.getElementById("drone-speed");
-  const speedValue = document.getElementById("drone-speed-value");
-  const linePointAltitudeLabel = document.getElementById("drone-line-point-altitude-label");
-  const linePointAltitudeInput = document.getElementById("drone-line-point-altitude");
-  const linePointAltitudeValue = document.getElementById("drone-line-point-altitude-value");
-  const btnLineConfirmAltitude = document.getElementById("btn-drone-line-confirm-altitude");
   const manualSpeedInput = document.getElementById("drone-manual-speed");
   const manualSpeedValue = document.getElementById("drone-manual-speed-value");
+  const manualLookSpeedInput = document.getElementById("drone-manual-look-speed");
+  const manualLookSpeedValue = document.getElementById("drone-manual-look-speed-value");
+  const manualVerticalSpeedInput = document.getElementById("drone-manual-vertical-speed");
+  const manualVerticalSpeedValue = document.getElementById("drone-manual-vertical-speed-value");
 
-  drone = createDroneView(viewer, overlay, {
+  drone = createDroneView(viewer, {
     onModeChange(mode) {
       panel.classList.toggle("visible", mode !== "idle");
       panel.classList.toggle("manual-mode", mode === "manual");
       if (mode === "idle") panel.classList.remove("collapsed"); // 다음에 열 때는 항상 펼쳐진 상태로 시작
       setPoiLabelsVisible(mode === "idle" && !isRecordingActive); // 드론뷰 동안에는 지명/POI 글자를 없애서 촬영 화면을 깔끔하게 유지
-      overlay.classList.toggle("active", drone.isWaitingForInput());
       document.getElementById("orbit-panel").style.display = mode === "idle" ? "flex" : "none";
-
-      if (mode === "line-altitude" || mode === "line-pick") {
-        const pointNo = drone.getLinePointIndex() + 1;
-        const total = drone.getLinePointCount();
-        statusEl.textContent =
-          mode === "line-altitude"
-            ? `${pointNo}번째 지점(총 ${total}개)의 고도를 정한 뒤 "지점 선택하기"를 누르세요`
-            : `${pointNo}번째 지점을 지도에서 클릭하세요`;
-      } else {
-        statusEl.textContent = DRONE_STATUS_TEXT[mode] || "";
-      }
-      if (mode === "line-altitude") {
-        const altitude = drone.getCurrentLinePointAltitude();
-        linePointAltitudeLabel.textContent = `${drone.getLinePointIndex() + 1}번째 지점 고도(지면 위)`;
-        linePointAltitudeInput.value = altitude;
-        linePointAltitudeValue.textContent = altitude;
-      }
-      chooseActionsEl.style.display = mode === "choosing" ? "flex" : "none";
-      lineCountOptionsEl.style.display = mode === "line-count" ? "block" : "none";
-      lineAltitudeOptionsEl.style.display = mode === "line-altitude" ? "block" : "none";
+      statusEl.textContent = DRONE_STATUS_TEXT[mode] || "";
       manualOptionsEl.style.display = mode === "manual" ? "block" : "none";
-      playControlsEl.style.display = mode === "ready" || mode === "playing" ? "block" : "none";
-
-      if (mode === "ready") {
-        btnPlay.disabled = false;
-        btnPlay.textContent = "▶ 재생";
-      } else if (mode === "playing") {
-        btnPlay.disabled = false;
-        btnPlay.textContent = "⏸ 정지";
-      }
-    },
-    onTooShort() {
-      showToast("선이 너무 짧습니다. 다시 그려주세요.", true);
-    },
-    onFinished() {
-      showToast("드론 비행이 끝났습니다.");
     },
   });
 
+  // "드론뷰" 버튼은 직선뷰/수동조정을 고르지 않고 바로 드론수동조정으로 들어간다. 지금 보고
+  // 있는 위치/방향을 그대로 이어받고, 속도 슬라이더에 적힌 현재 값(기본값 또는 지난 조작 때
+  // 조절해둔 값)부터 적용한다.
   btnToggle.onclick = () => {
     document.getElementById("info-card").classList.remove("visible");
-    drone.startChoosing();
-  };
-
-  btnLine.onclick = () => drone.chooseLineCount();
-
-  [2, 3, 4, 5].forEach((n) => {
-    document.getElementById(`btn-drone-line-count-${n}`).onclick = () => drone.setLinePointCount(n);
-  });
-
-  btnLineConfirmAltitude.onclick = () => drone.confirmLinePointAltitude();
-
-  btnManual.onclick = () => {
     drone.setManualSpeed(Number(manualSpeedInput.value));
+    drone.setManualLookRate(Number(manualLookSpeedInput.value));
+    drone.setManualVerticalSpeed(Number(manualVerticalSpeedInput.value));
     // vworld가 버튼 클릭 자체에도 카메라를 살짝 건드리는 특성이 있어서(main.js 하단 주석 참고),
     // 그 흔들림이 가라앉은 뒤에 현재 위치/방향을 캡처해야 엉뚱한 지점에서 시작하지 않는다.
-    runCameraActionAfterClickSettles(() => drone.chooseManual());
+    runCameraActionAfterClickSettles(() => drone.start());
   };
-
-  btnPlay.onclick = () => {
-    if (drone.getMode() === "playing") drone.pause();
-    else drone.play();
-  };
-
-  // 다시 그리기는 직선뷰/드론수동조정을 다시 고르는 단계로 돌아간다.
-  btnRedraw.onclick = () => drone.startChoosing();
 
   btnExit.onclick = () => drone.exit();
 
@@ -519,31 +450,23 @@ function setupDroneView() {
     btnCollapse.setAttribute("aria-label", collapsed ? "안내 펼치기" : "안내 최소화");
   };
 
-  linePointAltitudeInput.addEventListener("input", () => {
-    const m = Number(linePointAltitudeInput.value);
-    linePointAltitudeValue.textContent = m;
-    drone.setLinePointAltitude(m);
-  });
-
   manualSpeedInput.addEventListener("input", () => {
     const mps = Number(manualSpeedInput.value);
     manualSpeedValue.textContent = mps;
     drone.setManualSpeed(mps);
   });
 
-  speedInput.addEventListener("input", () => {
-    const mps = Number(speedInput.value);
-    speedValue.textContent = mps;
-    drone.setSpeed(mps);
+  manualLookSpeedInput.addEventListener("input", () => {
+    const degPerS = Number(manualLookSpeedInput.value);
+    manualLookSpeedValue.textContent = degPerS;
+    drone.setManualLookRate(degPerS);
   });
 
-  overlay.addEventListener("pointerdown", (e) => {
-    e.preventDefault();
-    drone.handlePointerDown(e);
+  manualVerticalSpeedInput.addEventListener("input", () => {
+    const mps = Number(manualVerticalSpeedInput.value);
+    manualVerticalSpeedValue.textContent = mps;
+    drone.setManualVerticalSpeed(mps);
   });
-  overlay.addEventListener("pointermove", (e) => drone.handlePointerMove(e));
-  window.addEventListener("pointerup", (e) => drone.handlePointerUp(e));
-  window.addEventListener("resize", () => drone.resizeOverlay());
 }
 
 // 녹화가 끝난 뒤 공통으로 하는 일: 저장할지 물어보고, 원하면 파일로 저장한다.
@@ -622,34 +545,6 @@ function waitForPacedRender(recorder, lastCaptureTimeState) {
   });
 }
 
-// 드론 직선뷰가 "재생 준비됨" 상태일 때만 쓸 수 있는 고정 프레임 녹화. 재생을 실제 시간이
-// 아니라 고정된 간격으로 우리가 직접 한 걸음씩 몰아서 진행시키고, 매 걸음마다 그 순간의
-// 화면을 프레임으로 찍어 넣는다. 3D 타일 로딩 등으로 렌더링이 느려지는 구간이 있어도 진행
-// 속도 자체는 항상 일정해서, 실시간 녹화와 달리 결과 영상이 끊겨 보이지 않는다. 대신 로딩이
-// 느리면 녹화가 끝나는 데 걸리는 실제 시간은 영상 길이보다 더 걸릴 수 있다.
-async function runLockedLineFlightRecording(recorder, shouldCancel) {
-  if (!drone.beginLockedLineFlight()) return null;
-
-  try {
-    recorder.startLocked();
-  } catch (err) {
-    drone.endLockedLineFlight();
-    throw err;
-  }
-
-  const lastCaptureTimeState = { t: performance.now() };
-  let finished = false;
-  while (!finished) {
-    if (drone.getMode() !== "playing") break; // 녹화 도중 드론뷰가 종료되는 등 외부 요인으로 중단
-    if (shouldCancel()) break; // 녹화 버튼을 다시 눌러 직접 멈춘 경우
-    finished = drone.stepLockedLineFlight(LOCKED_RECORDING_FIXED_DT_S);
-    await waitForPacedRender(recorder, lastCaptureTimeState);
-  }
-
-  drone.endLockedLineFlight();
-  return recorder.stop();
-}
-
 // 드론수동조정/조망뷰처럼 "미리 정해진 경로가 없는" 조작은, 사용자가 실시간으로 한 번 조작하는
 // 동안 입력 변화만 타임라인으로 기록해뒀다가(각 stepFn 소유자의 begin~end 구간), 그 타임라인을
 // 고정 프레임으로 그대로 재생하면서 캡처한다. recordedInput은 { events, durationSec, ... } 형태.
@@ -713,13 +608,12 @@ async function runViewpointReplayRecording(recorder, recordedInput, shouldCancel
 }
 
 // 화면(3D 지도) 녹화: 사이드바 상단의 녹화 아이콘을 누르면 시작, 다시 누르면 중지하고 저장
-// 여부를 물어본 뒤 mp4(또는 브라우저가 지원 안 하면 webm)로 저장한다. 상황에 따라 네 가지
+// 여부를 물어본 뒤 mp4(또는 브라우저가 지원 안 하면 webm)로 저장한다. 상황에 따라 세 가지
 // 방식 중 하나로 동작한다(고정 프레임 녹화를 지원하는 브라우저에 한해):
-// - 드론 직선뷰 "재생 준비됨": 경로를 고정 프레임으로 직접 재생하며 녹화(runLockedLineFlightRecording)
 // - 드론수동조정 중: 조작 입력을 기록 -> 다시 누르면 그 조작을 고정 프레임으로 재생하며 녹화
 // - 조망뷰 중: 방향패드 입력을 기록 -> 다시 누르면 그 조작을 고정 프레임으로 재생하며 녹화
 // - 그 외(일반 화면 등): 기존처럼 화면을 실시간 그대로 녹화
-// 두 "입력 기록" 방식은 재생/녹화 단계에서 다시 누르면 그때까지 찍은 만큼만 저장하고 멈춘다.
+// "입력 기록" 방식은 재생/녹화 단계에서 다시 누르면 그때까지 찍은 만큼만 저장하고 멈춘다.
 function setupScreenRecorder() {
   const btn = document.getElementById("btn-record");
   const glyph = btn.querySelector(".icon-btn-glyph");
@@ -738,7 +632,7 @@ function setupScreenRecorder() {
     tooltip.textContent = tooltipText;
   }
 
-  // idle | locked-line | manual-input | manual-replay | viewpoint-input | viewpoint-replay | realtime
+  // idle | manual-input | manual-replay | viewpoint-input | viewpoint-replay | realtime
   let phase = "idle";
   let cancelRequested = false;
 
@@ -787,7 +681,7 @@ function setupScreenRecorder() {
     }
 
     // ---- 고정 프레임 재생/녹화가 이미 진행 중이면: 다시 누른 건 "지금까지만 저장해라" ----
-    if (phase === "locked-line" || phase === "manual-replay" || phase === "viewpoint-replay") {
+    if (phase === "manual-replay" || phase === "viewpoint-replay") {
       cancelRequested = true; // 다음 걸음에서 루프가 멈춘다
       return;
     }
@@ -813,24 +707,6 @@ function setupScreenRecorder() {
     }
 
     // ---- 아무것도 진행 중이 아니면: 지금 화면 상황에 맞는 녹화를 새로 시작 ----
-    if (drone.getMode() === "ready" && recorder.isLockedFrameSupported()) {
-      phase = "locked-line";
-      cancelRequested = false;
-      isRecordingActive = true;
-      setPoiLabelsVisible(false);
-      markRecordingUi(true, "고정 프레임 녹화 중 (다시 누르면 중지)");
-      showToast("직선뷰를 고정 프레임으로 녹화합니다. 로딩 상황에 따라 시간이 걸릴 수 있어요.");
-      let result = null;
-      try {
-        result = await runLockedLineFlightRecording(recorder, () => cancelRequested);
-      } catch (err) {
-        console.error(err);
-        showToast(err.message || "녹화를 시작하지 못했습니다.", true);
-      }
-      await finishPhase(result);
-      return;
-    }
-
     if (drone.getMode() === "manual" && recorder.isLockedFrameSupported() && drone.beginManualInputRecording()) {
       phase = "manual-input";
       isRecordingActive = true;

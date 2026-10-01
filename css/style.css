@@ -146,22 +146,6 @@ html, body {
   opacity: 1;
 }
 
-/* 지도(Cesium 캔버스) 위에 얹히는 투명 오버레이. 평소엔 지도 조작을 그대로 통과시키다가
-   드론뷰 "그리기" 모드일 때만(.active) 드래그 제스처를 가로챈다. */
-#drone-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-
-#drone-overlay.active {
-  pointer-events: auto;
-  cursor: crosshair;
-}
-
 #drone-panel {
   /* 방향 패드(#orbit-panel: top:155px, height:126px, right:30px) 바로 아래, 같은 오른쪽
      여백으로 붙인다. */
@@ -238,10 +222,6 @@ html, body {
   display: none;
 }
 
-#drone-choose-actions,
-#drone-play-controls,
-#drone-line-count-options,
-#drone-line-altitude-options,
 #drone-manual-options {
   display: none;
 }
